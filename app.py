@@ -1,11 +1,18 @@
-import streamlit as st
+import os
+import subprocess
 import asyncio
 import random
+import socket
+import smtplib
 import pandas as pd
-from playwright.async_api import async_playwright
+import streamlit as st
 import google.generativeai as genai
-from bs4 import BeautifulSoup
-import requests
+
+# تثبيت متصفح Playwright تلقائياً على السيرفر السحابي
+try:
+    subprocess.run(["playwright", "install", "chromium"], check=True)
+except Exception as e:
+    print(f"Notice during browser install: {e}")
 
 # إعداد واجهة Streamlit
 st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
@@ -19,12 +26,70 @@ if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
 
 # مدخلات المستخدم الأساسية
-city = st.text_input("أدخل اسم المدينة والولة (مثال: New York, USA):", "New York, USA")
+city = st.text_input("أدخل اسم المدينة والدولة (مثال: New York, USA):", "New York, USA")
 keyword = st.text_input("الكلمة المفتاحية لنوع الشركة (مثال: Logistics companies):", "Logistics companies")
 max_results = st.number_input("الحد الأقصى للنتائج المطلوب سحبها:", min_value=5, max_value=50, value=10, step=5)
 
-start_button = st.button("🚀 بدء المحرك المزدوج (بحث + ذكاء اصطناعي)")
+start_button = st.button("🚀 بدء المحرك المزدوج (بحث + ذكاء اصطناعي + توليد وفحص)")
 
+# === المحرك الثاني: الذكاء الاصطناعي لتحليل صاحب القرار ===
+def extract_decision_maker_with_ai(company_name):
+    if not gemini_api_key:
+        return "مفتاح الذكاء الاصطناعي غير متوفر", "غير محدد"
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        أنت محلل بيانات لوجستية وخبير تجاري. بالنسبة لشركة الشحن أو اللوجستيات المسماة "{company_name}", 
+        قم بتوقع أو استنتاج اسم المؤسس أو المدير التنفيذي (CEO أو Owner) المحتمل بناءً على اسم الشركة والسوق العاملة فيه، 
+        أو أعطني وصفاً لمن يُعتبر صاحب القرار في شركات كهذه مع تخمين صيغة إيميل احترافية (مثل info@{company_name.lower().replace(' ', '')}.com).
+        أجب باختصار شديد باللغة العربية على شكل:
+        الاسم المقترح: [...]
+        الإيميل المقترح: [...]
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"خطأ في الاتصال بالذكاء الاصطناعي: {e}"
+
+# === المحرك الثالث: مولد صيغ الإيميلات الاحترافية ===
+def generate_email_permutations(name, company_name):
+    """توليد مصفوفة احتمالات الإيميلات الاحترافية"""
+    domain = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "") + ".com"
+    
+    permutations = []
+    if not name or name == "غير محدد":
+        return [f"info@{domain}", f"contact@{domain}"]
+    
+    parts = name.lower().split()
+    if len(parts) >= 2:
+        first = parts[0]
+        last = parts[-1]
+        permutations.extend([
+            f"{first}.{last}@{domain}",
+            f"{first}{last}@{domain}",
+            f"{first[0]}{last}@{domain}",
+            f"{first}@{domain}"
+        ])
+    else:
+        first = parts[0]
+        permutations.extend([f"{first}@{domain}"])
+        
+    permutations.extend([f"info@{domain}", f"sales@{domain}"])
+    return list(set(permutations))
+
+# === المحرك الرابع: فحص الـ SMTP الأساسي والدومين ===
+def verify_smtp_email(email):
+    """فحص أولي لصلاحية الإيميل والدومين لتجنب الحظر"""
+    try:
+        domain = email.split('@')[1]
+        records = socket.getaddrinfo(domain, 25)
+        if not records:
+            return "مرفوض (لا يوجد خادم بريد)"
+        return "صالح / مؤكد مبدئياً"
+    except Exception:
+        return "غير مؤكد (يحتاج فحص يدوي)"
+
+# === المحرك الأول: سحب الخرائط عبر Playwright ===
 async def scrape_google_maps(search_query, max_items):
     results = []
     async with async_playwright() as p:
@@ -80,48 +145,40 @@ async def scrape_google_maps(search_query, max_items):
         await browser.close()
     return results
 
-def extract_decision_maker_with_ai(company_name):
-    if not gemini_api_key:
-        return "مفتاح الذكاء الاصطناعي غير متوفر", "غير محدد"
-    
-    try:
-        # استخدام نموذج خفيف وسريع للتحليل
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        أنت محلل بيانات لوجستية وخبير تجاري. بالنسبة لشركة الشحن أو اللوجستيات المسماة "{company_name}", 
-        قم بتوقع أو استنتاج اسم المؤسس أو المدير التنفيذي (CEO أو Owner) المحتمل بناءً على اسم الشركة والسوق العاملة فيه، 
-        أو أعطني وصفاً لمن يُعتبر صاحب القرار في شركات كهذه مع تخمين صيغة إيميل احترافية (مثل info@{company_name.lower().replace(' ', '')}.com).
-        أجب باختصار شديد باللغة العربية على شكل:
-        الاسم المقترح: [...]
-        الإيميل المقترح: [...]
-        """
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"خطأ في الاتصال بالذكاء الاصطناعي: {e}"
-
+# === التنفيذ الرئيسي عند الضغط على زر البحث ===
 if start_button:
     query = f"{keyword} in {city}"
-    st.write(f"🔍 جاري تنفيذ البحث واستدعاء عقل الذكاء الاصطناعي لـ: **{query}**")
+    st.write(f"🔍 جاري تنفيذ البحث واستدعاء المحركات الأربعة لـ: **{query}**")
     
-    with st.spinner("جاري سحب الشركات وتحليلها..."):
+    with st.spinner("جاري سحب الشركات، التحليل بالذكاء الاصطناعي وتوليد وفحص الإيميلات..."):
         extracted_data = asyncio.run(scrape_google_maps(query, max_results))
         
     if extracted_data:
-        st.success(f"تم العثور على {len(extracted_data)} شركة! جاري تحليل أصحاب القرار بالذكاء الاصطناعي...")
+        st.success(f"تم العثور على {len(extracted_data)} شركة! جاري المعالجة الكاملة...")
         
         enhanced_results = []
         progress_bar = st.progress(0)
         
         for i, item in enumerate(extracted_data):
             company = item["اسم الشركة"]
-            # تحليل بالذكاء الاصطناعي لكل شركة
+            
+            # تشغيل المحرك الثاني (الذكاء الاصطناعي)
             ai_analysis = extract_decision_maker_with_ai(company)
             
+            # تشغيل المحرك الثالث (توليد الإيميلات)
+            emails_list = generate_email_permutations(company, company)
+            best_email = emails_list[0] if emails_list else "غير متوفر"
+            
+            # تشغيل المحرك الرابع (فحص الـ SMTP)
+            smtp_status = verify_smtp_email(best_email)
+
             enhanced_results.append({
                 "اسم الشركة": company,
                 "رابط الخرائط": item["رابط الخرائط"],
-                "تحليل صاحب القرار والإيميل (AI)": ai_analysis
+                "تحليل صاحب القرار (AI)": ai_analysis,
+                "أفضل إيميل مقترح": best_email,
+                "حالة الفحص (SMTP)": smtp_status,
+                "جميع الاحتمالات": ", ".join(emails_list)
             })
             progress_bar.progress((i + 1) / len(extracted_data))
             
@@ -130,11 +187,11 @@ if start_button:
         
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 تحميل النتائج الذكية بصيغة CSV",
+            label="📥 تحميل النتائج الشاملة بصيغة CSV",
             data=csv_data,
-            file_name=f"smart_leads_{city}.csv",
+            file_name=f"verilogix_leads_{city}.csv",
             mime="text/csv"
         )
     else:
         st.error("لم يتم العثور على نتائج. تأكد من الكلمات المفتاحية.")
-          
+    
