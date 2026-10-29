@@ -33,15 +33,14 @@ class SovereignCrawler:
                     response = await client.get(target_url)
                     if response.status_code == 200:
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        # إزالة النصوص غير الهامة لتوفير مساحة السياق
                         for script in soup(["script", "style", "nav", "footer"]):
                             script.extract()
                         combined_text += f"\n--- Path: {path} ---\n" + soup.get_text()[:3000]
                 except Exception:
                     continue
 
-        # الحل المعقد والمضمون: استخدام نموذج Gemini لتحليل النصوص واستخراج صاحب القرار بدقة مطلقة
-        if combined_text and genai:
+        # استخدام نموذج Gemini لتحليل النصوص واستخراج صاحب القرار بدقة مطلقة
+        if combined_text:
             try:
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 prompt = f"""
@@ -99,4 +98,4 @@ class SovereignCrawler:
         ])
         
         return list(dict.fromkeys(permutations))
-                        
+                
