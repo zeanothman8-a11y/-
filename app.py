@@ -6,8 +6,7 @@ import socket
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
-
-from engine import verify_smtp_mailbox
+from engine import verify_and_get_smart_email
 from scraper import SovereignScraper
 from crawler import SovereignCrawler
 from notifier import TelegramNotifier
@@ -76,7 +75,7 @@ if start_button:
             # 2. تشغيل المحرك الثاني (الزحف الداخلي وكشف صاحب القرار)
             identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
             owner = identity_data["owner_name"]
-            
+            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
             # 3. تشغيل المحرك الثالث (توليد مصفوفة الإيميلات)
             permutations = crawler.generate_permutations(owner, estimated_domain)
             best_email = permutations[0] if permutations else f"info@{estimated_domain}"
