@@ -7,6 +7,25 @@ import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 from engine import verify_smtp_mailbox, generate_and_verify_leads
+from scraper import SovereignScraper
+import asyncio
+
+# داخل زر التشغيل في Streamlit:
+if start_button:
+    st.info(f"جاري تشغيل محرك السحب السيادي لمدينة: {city}...")
+    
+    # تهيئة كلاس السحب
+    scraper = SovereignScraper(city=city, keyword=keyword, max_results=int(max_results))
+    
+    # تشغيل السحب بشكل غير متزامن
+    raw_leads = asyncio.run(scraper.scrape_maps())
+    
+    if raw_leads:
+        st.success(f"تم بنجاح سحب {len(raw_leads)} شركة شحن مستهدفة!")
+        # هنا سنقوم بتمرير هذه القائمة مباشرة إلى المحرك الثاني (Identity Finder & Email Permutator)
+    else:
+        st.error("لم يتم جلب نتائج، جرب تغيير اسم المدينة أو زيادة وقت الانتظار.")
+        
 # تثبيت متصفح Playwright تلقائياً على السيرفر السحابي بأمان
 @st.cache_resource
 def install_playwright():
