@@ -3,16 +3,19 @@ import subprocess
 import asyncio
 import random
 import socket
-import smtplib
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 
-# تثبيت متصفح Playwright تلقائياً على السيرفر السحابي
-try:
-    subprocess.run(["playwright", "install", "chromium"], check=True)
-except Exception as e:
-    print(f"Notice during browser install: {e}")
+# تثبيت متصفح Playwright تلقائياً على السيرفر السحابي بأمان
+@st.cache_resource
+def install_playwright():
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print(f"Notice during browser install: {e}")
+
+install_playwright()
 
 # إعداد واجهة Streamlit
 st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
@@ -26,7 +29,7 @@ if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
 
 # مدخلات المستخدم الأساسية
-city = st.text_input("أدخل اسم المدينة والدولة (مثال: New York, USA):", "New York, USA")
+city = st.text_input("أدخل اسم المدينة والدولة (مثال: Rotterdam, Netherlands):", "Rotterdam, Netherlands")
 keyword = st.text_input("الكلمة المفتاحية لنوع الشركة (مثال: Logistics companies):", "Logistics companies")
 max_results = st.number_input("الحد الأقصى للنتائج المطلوب سحبها:", min_value=5, max_value=50, value=10, step=5)
 
@@ -41,7 +44,7 @@ def extract_decision_maker_with_ai(company_name):
         prompt = f"""
         أنت محلل بيانات لوجستية وخبير تجاري. بالنسبة لشركة الشحن أو اللوجستيات المسماة "{company_name}", 
         قم بتوقع أو استنتاج اسم المؤسس أو المدير التنفيذي (CEO أو Owner) المحتمل بناءً على اسم الشركة والسوق العاملة فيه، 
-        أو أعطني وصفاً لمن يُعتبر صاحب القرار في شركات كهذه مع تخمين صيغة إيميل احترافية (مثل info@{company_name.lower().replace(' ', '')}.com).
+        أو أعطني وصفاً لمن يُعتبر صاحب القرار في شركات كهذه مع تخمين صيغة إيميل احترافية (مثل info@{company_name.lower().replace(' ', '').replace(',', '')}.com).
         أجب باختصار شديد باللغة العربية على شكل:
         الاسم المقترح: [...]
         الإيميل المقترح: [...]
@@ -54,27 +57,17 @@ def extract_decision_maker_with_ai(company_name):
 # === المحرك الثالث: مولد صيغ الإيميلات الاحترافية ===
 def generate_email_permutations(name, company_name):
     """توليد مصفوفة احتمالات الإيميلات الاحترافية"""
-    domain = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "") + ".com"
+    clean_domain = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("ltd", "")
+    domain = f"{clean_domain}.com"
     
-    permutations = []
-    if not name or name == "غير محدد":
-        return [f"info@{domain}", f"contact@{domain}"]
-    
-    parts = name.lower().split()
-    if len(parts) >= 2:
-        first = parts[0]
-        last = parts[-1]
-        permutations.extend([
-            f"{first}.{last}@{domain}",
-            f"{first}{last}@{domain}",
-            f"{first[0]}{last}@{domain}",
-            f"{first}@{domain}"
-        ])
-    else:
-        first = parts[0]
-        permutations.extend([f"{first}@{domain}"])
-        
-    permutations.extend([f"info@{domain}", f"sales@{domain}"])
+    permutations = [f"info@{domain}", f"contact@{domain}", f"sales@{domain}"]
+    if name and name != "غير محدد":
+        parts = name.lower().split()
+        if len(parts) >= 2:
+            first, last = parts[0], parts[-1]
+            permutations.insert(0, f"{first}.{last}@{domain}")
+            permutations.insert(1, f"{first}{last}@{domain}")
+            
     return list(set(permutations))
 
 # === المحرك الرابع: فحص الـ SMTP الأساسي والدومين ===
@@ -92,10 +85,13 @@ def verify_smtp_email(email):
 # === المحرك الأول: سحب الخرائط عبر Playwright ===
 async def scrape_google_maps(search_query, max_items):
     results = []
+    # استدعاء playwright داخل الدالة لتجنب أخطاء النطاق المتزامن
+    from playwright.async_api import async_playwright
+    
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -103,46 +99,51 @@ async def scrape_google_maps(search_query, max_items):
         )
         page = await context.new_page()
         url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
-        await page.goto(url, timeout=60000)
-        await page.wait_for_timeout(3000)
         
-        scroll_selector = 'div[role="feed"]'
         try:
-            await page.wait_for_selector(scroll_selector, timeout=10000)
-        except Exception:
-            pass
+            await page.goto(url, timeout=60000)
+            await page.wait_for_timeout(3000)
             
-        collected_count = 0
-        items_history = set()
-        
-        for _ in range(10):
-            if collected_count >= max_items:
-                break
-            cards = await page.query_selector_all('a[href*="/maps/place/"]')
-            for card in cards:
+            scroll_selector = 'div[role="feed"]'
+            try:
+                await page.wait_for_selector(scroll_selector, timeout=10000)
+            except Exception:
+                pass
+                
+            collected_count = 0
+            items_history = set()
+            
+            for _ in range(8):
                 if collected_count >= max_items:
                     break
-                href = await card.get_attribute("href")
-                if href in items_history:
-                    continue
-                items_history.add(href)
+                cards = await page.query_selector_all('a[href*="/maps/place/"]')
+                for card in cards:
+                    if collected_count >= max_items:
+                        break
+                    href = await card.get_attribute("href")
+                    if href in items_history:
+                        continue
+                    items_history.add(href)
+                    
+                    aria_label = await card.get_attribute("aria-label")
+                    company_name = aria_label if aria_label else await card.inner_text()
+                    company_name = company_name.split('\n')[0].strip()
+                    
+                    if company_name and len(company_name) > 2:
+                        results.append({
+                            "اسم الشركة": company_name,
+                            "رابط الخرائط": href
+                        })
+                        collected_count += 1
                 
-                aria_label = await card.get_attribute("aria-label")
-                company_name = aria_label if aria_label else await card.inner_text()
-                company_name = company_name.split('\n')[0].strip()
-                
-                if company_name and len(company_name) > 2:
-                    results.append({
-                        "اسم الشركة": company_name,
-                        "رابط الخرائط": href
-                    })
-                    collected_count += 1
+                if await page.query_selector(scroll_selector):
+                    await page.eval_on_selector(scroll_selector, "el => el.scrollBy(0, 1000)")
+                    await page.wait_for_timeout(random.randint(1500, 2500))
+        except Exception as e:
+            print(f"Error during scraping: {e}")
+        finally:
+            await browser.close()
             
-            if await page.query_selector(scroll_selector):
-                await page.eval_on_selector(scroll_selector, "el => el.scrollBy(0, 1000)")
-                await page.wait_for_timeout(random.randint(1500, 2500))
-        
-        await browser.close()
     return results
 
 # === التنفيذ الرئيسي عند الضغط على زر البحث ===
@@ -151,6 +152,7 @@ if start_button:
     st.write(f"🔍 جاري تنفيذ البحث واستدعاء المحركات الأربعة لـ: **{query}**")
     
     with st.spinner("جاري سحب الشركات، التحليل بالذكاء الاصطناعي وتوليد وفحص الإيميلات..."):
+        # تشغيل الدالة غير المتزامنة بشكل آمن داخل Streamlit
         extracted_data = asyncio.run(scrape_google_maps(query, max_results))
         
     if extracted_data:
@@ -166,8 +168,8 @@ if start_button:
             ai_analysis = extract_decision_maker_with_ai(company)
             
             # تشغيل المحرك الثالث (توليد الإيميلات)
-            emails_list = generate_email_permutations(company, company)
-            best_email = emails_list[0] if emails_list else "غير متوفر"
+            emails__list = generate_email_permutations(company, company)
+            best_email = emails__list[0] if emails__list else "غير متوفر"
             
             # تشغيل المحرك الرابع (فحص الـ SMTP)
             smtp_status = verify_smtp_email(best_email)
@@ -178,7 +180,7 @@ if start_button:
                 "تحليل صاحب القرار (AI)": ai_analysis,
                 "أفضل إيميل مقترح": best_email,
                 "حالة الفحص (SMTP)": smtp_status,
-                "جميع الاحتمالات": ", ".join(emails_list)
+                "جميع الاحتمالات": ", ".join(emails__list)
             })
             progress_bar.progress((i + 1) / len(extracted_data))
             
@@ -193,4 +195,5 @@ if start_button:
             mime="text/csv"
         )
     else:
-        st.error("لم يتم العثور على نتائج. تأكد من الكلمات المفتاحية.")
+        st.error("لم يتم العثور على نتائج. تأكد من الكلمات المفتاحية أو جرب زيادة وقت الانتظار.")
+        
