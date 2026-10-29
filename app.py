@@ -26,14 +26,6 @@ except Exception:
     gemini_api_key = ""
     telegram_token = ""
     telegram_chat_id = ""
-    
-
-# بعد استخراج وتحليل النتائج بنجاح:
-if telegram_token and telegram_chat_id:
-    notifier = TelegramNotifier(telegram_token, telegram_chat_id)
-    summary_msg = f"🚀 *تم سحب وفحص شركات جديدة بنجاح!*\n📍 المدينة: {city}\n📊 عدد الشركات: {len(final_results)}\n✅ تم التأكد من إيميلات أصحاب القرار."
-    notifier.send_alert(summary_msg)
-    
 class SovereignCrawler:
     def __init__(self):
         self.headers = {
@@ -317,7 +309,14 @@ if start_button:
             
         df = pd.DataFrame(enhanced_results)
         st.dataframe(df, use_container_width=True)
-        
+        # بعد استخراج وتحليل النتائج بنجاح:
+        if telegram_token and telegram_chat_id:
+            try:
+                notifier = TelegramNotifier(telegram_token, telegram_chat_id)
+                summary_msg = f"🚀 *تم سحب وفحص شركات جديدة بنجاح!*\n📍 المدينة: {city}\n📊 عدد الشركات: {len(final_results)}\n✅ تم التأكد من إيميلات أصحاب القرار."
+                notifier.send_alert(summary_msg)
+            except Exception as e:
+                st.warning(f"تعذر إرسال التنبيه: {e}")
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 تحميل النتائج الشاملة بصيغة CSV",
