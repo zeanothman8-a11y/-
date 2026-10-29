@@ -73,7 +73,7 @@ def verify_and_get_smart_email(owner_name: str, domain: str) -> tuple[str, str]:
             # إذا فشل النمط الأول، نجرب النمط الاحتياطي الأول المتاح
             return permutations[1] if len(permutations) > 1 else target_email, f"مفحوص (استجابة بديلة: {code_real})"
             
-        except Exception as e:
+    except Exception as e:
             # في حال وجود حظر مؤقت على الـ Port أو مشكلة شبكية، نعتمد على النمط الإحصائي الهندسي
             return target_email, f"تم الاعتماد على النمط القياسي (استثناء شبكي آمن)"
         
