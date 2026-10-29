@@ -1,89 +1,69 @@
-import os
-import subprocess
 import streamlit as st
 import asyncio
 import random
 import pandas as pd
 from playwright.async_api import async_playwright
+import google.generativeai as genai
+from bs4 import BeautifulSoup
+import requests
 
-# محاولة تثبيت متصفح Playwright تلقائياً على السيرفر السحابي
-try:
-  subprocess.run(["playwright", "install", "chromium"], check=True)
-except Exception as e:
-  print(f"Notice during browser install: {e}")
 # إعداد واجهة Streamlit
-st.set_page_config(page_title="Scraper Engine", layout="wide")
-st.title("🛰️ المحرك الأول: صائد الشركات من خرائط جوجل")
+st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
+st.title("🛰️ نظام Verilogix AI: صائد الشركات وأصحاب القرار")
 
-# مدخلات المستخدم
-city = st.text_input("أدخل اسم المدينة والكدولة (مثال: New York, USA):", "New York, USA")
+# شريط جانبي لإدخال مفتاح الذكاء الاصطناعي
+st.sidebar.header("⚙️ إعدادات الذكاء الاصطناعي")
+gemini_api_key = st.sidebar.text_input("أدخل مفتاح Google Gemini API:", type="password")
+
+if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
+
+# مدخلات المستخدم الأساسية
+city = st.text_input("أدخل اسم المدينة والولة (مثال: New York, USA):", "New York, USA")
 keyword = st.text_input("الكلمة المفتاحية لنوع الشركة (مثال: Logistics companies):", "Logistics companies")
-max_results = st.number_input("الحد الأقصى للنتائج المطلوب سحبها:", min_value=5, max_value=200, value=15, step=5)
+max_results = st.number_input("الحد الأقصى للنتائج المطلوب سحبها:", min_value=5, max_value=50, value=10, step=5)
 
-start_button = st.button("🚀 بدء عملية الاستخراج")
+start_button = st.button("🚀 بدء المحرك المزدوج (بحث + ذكاء اصطناعي)")
 
 async def scrape_google_maps(search_query, max_items):
     results = []
-    
     async with async_playwright() as p:
-        # تشغيل متصفح Chromium بمعلمات تفادي الكشف عن البوتات
         browser = await p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox"
-            ]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         )
-        
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             locale="en-US"
         )
-        
         page = await context.new_page()
-        
-        # التوجه إلى خرائط جوجل
         url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
-        st.info(f"جاري الانتقال إلى: {url}")
         await page.goto(url, timeout=60000)
         await page.wait_for_timeout(3000)
         
-        # محاكاة التمرير لأسفل لتحميل القائمة
         scroll_selector = 'div[role="feed"]'
         try:
             await page.wait_for_selector(scroll_selector, timeout=10000)
         except Exception:
-            st.warning("لم يتم العثور على حاوية نتائج قياسية، جاري محاولة القراءة المباشرة...")
-        
+            pass
+            
         collected_count = 0
         items_history = set()
         
-        progress_bar = st.progress(0)
-        
-        for _ in range(15):  # محاولات التمرير
+        for _ in range(10):
             if collected_count >= max_items:
                 break
-                
-            # جلب جميع عناصر الشركات في الصفحة
             cards = await page.query_selector_all('a[href*="/maps/place/"]')
-            
             for card in cards:
                 if collected_count >= max_items:
                     break
-                    
                 href = await card.get_attribute("href")
                 if href in items_history:
                     continue
-                    
                 items_history.add(href)
                 
-                # الحصول على الاسم بأسلوب آمن
                 aria_label = await card.get_attribute("aria-label")
-                if aria_label:
-                    company_name = aria_label
-                else:
-                    company_name = await card.inner_text()
-                    
+                company_name = aria_label if aria_label else await card.inner_text()
                 company_name = company_name.split('\n')[0].strip()
                 
                 if company_name and len(company_name) > 2:
@@ -92,37 +72,69 @@ async def scrape_google_maps(search_query, max_items):
                         "رابط الخرائط": href
                     })
                     collected_count += 1
-                    progress_bar.progress(min(collected_count / max_items, 1.0))
             
-            # محاكاة سلوك بشري بالتمرير والانتظار العشوائي
             if await page.query_selector(scroll_selector):
                 await page.eval_on_selector(scroll_selector, "el => el.scrollBy(0, 1000)")
-                await page.wait_for_timeout(random.randint(1500, 3000))
+                await page.wait_for_timeout(random.randint(1500, 2500))
         
         await browser.close()
     return results
 
+def extract_decision_maker_with_ai(company_name):
+    if not gemini_api_key:
+        return "مفتاح الذكاء الاصطناعي غير متوفر", "غير محدد"
+    
+    try:
+        # استخدام نموذج خفيف وسريع للتحليل
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        أنت محلل بيانات لوجستية وخبير تجاري. بالنسبة لشركة الشحن أو اللوجستيات المسماة "{company_name}", 
+        قم بتوقع أو استنتاج اسم المؤسس أو المدير التنفيذي (CEO أو Owner) المحتمل بناءً على اسم الشركة والسوق العاملة فيه، 
+        أو أعطني وصفاً لمن يُعتبر صاحب القرار في شركات كهذه مع تخمين صيغة إيميل احترافية (مثل info@{company_name.lower().replace(' ', '')}.com).
+        أجب باختصار شديد باللغة العربية على شكل:
+        الاسم المقترح: [...]
+        الإيميل المقترح: [...]
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"خطأ في الاتصال بالذكاء الاصطناعي: {e}"
+
 if start_button:
     query = f"{keyword} in {city}"
-    st.write(f"🔍 البحث عن: **{query}**")
+    st.write(f"🔍 جاري تنفيذ البحث واستدعاء عقل الذكاء الاصطناعي لـ: **{query}**")
     
-    with st.spinner("جاري سحب البيانات ومحاكاة التصفح البشري..."):
-        # تشغيل دالة async داخل Streamlit
+    with st.spinner("جاري سحب الشركات وتحليلها..."):
         extracted_data = asyncio.run(scrape_google_maps(query, max_results))
         
     if extracted_data:
-        st.success(f"تم العثور على {len(extracted_data)} شركة بنجاح!")
-        df = pd.DataFrame(extracted_data)
+        st.success(f"تم العثور على {len(extracted_data)} شركة! جاري تحليل أصحاب القرار بالذكاء الاصطناعي...")
+        
+        enhanced_results = []
+        progress_bar = st.progress(0)
+        
+        for i, item in enumerate(extracted_data):
+            company = item["اسم الشركة"]
+            # تحليل بالذكاء الاصطناعي لكل شركة
+            ai_analysis = extract_decision_maker_with_ai(company)
+            
+            enhanced_results.append({
+                "اسم الشركة": company,
+                "رابط الخرائط": item["رابط الخرائط"],
+                "تحليل صاحب القرار والإيميل (AI)": ai_analysis
+            })
+            progress_bar.progress((i + 1) / len(extracted_data))
+            
+        df = pd.DataFrame(enhanced_results)
         st.dataframe(df, use_container_width=True)
         
-        # إمكانية تحميل النتائج
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 تحميل البيانات بصيغة CSV",
+            label="📥 تحميل النتائج الذكية بصيغة CSV",
             data=csv_data,
-            file_filename=f"companies_{city}.csv",
+            file_name=f"smart_leads_{city}.csv",
             mime="text/csv"
         )
     else:
-        st.error("لم يتم العثور على نتائج أو تم حجب الطلب. حاول تعديل الكلمات المفتاحية.")
-      
+        st.error("لم يتم العثور على نتائج. تأكد من الكلمات المفتاحية.")
+          
