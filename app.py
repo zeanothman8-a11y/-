@@ -7,6 +7,7 @@ import whois
 import asyncio
 import re
 import httpx
+import streamlit as st
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
@@ -15,6 +16,17 @@ from scraper import SovereignScraper
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from notifier import TelegramNotifier
+# استدعاء الأسرار بأمان تام من سيرفر المنصة السحابية
+try:
+    gemini_api_key = st.secrets["api_keys"]["GEMINI_API_KEY"]
+    telegram_token = st.secrets["api_keys"]["TELEGRAM_TOKEN"]
+    telegram_chat_id = st.secrets["api_keys"]["TELEGRAM_CHAT_ID"]
+except Exception:
+    # قيم احتياطية لكي لا ينهار التطبيق إذا لم يتم إعداد الأسرار بعد
+    gemini_api_key = ""
+    telegram_token = ""
+    telegram_chat_id = ""
+    
 
 # بعد استخراج وتحليل النتائج بنجاح:
 if telegram_token and telegram_chat_id:
