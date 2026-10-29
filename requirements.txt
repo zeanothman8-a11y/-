@@ -1,0 +1,6 @@
+streamlit
+playwright
+google-generativeai
+pandas
+beautifulsoup4
+python-whois
