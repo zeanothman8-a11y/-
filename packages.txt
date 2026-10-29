@@ -23,3 +23,4 @@ libxrender1
 libxss1
 libxtst6
 libasound2
+libxkbcommon0
