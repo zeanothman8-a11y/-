@@ -10,6 +10,7 @@ from engine import verify_and_get_smart_email
 from scraper import SovereignScraper
 from crawler import SovereignCrawler
 from notifier import TelegramNotifier
+from database import SovereignDatabase
 
 # استدعاء الأسرار بأمان تام من سيرفر المنصة السحابية
 try:
@@ -33,6 +34,9 @@ def install_playwright():
         print(f"Notice during browser install: {e}")
 
 install_playwright()
+
+# تهيئة قاعدة البيانات السيادية
+db = SovereignDatabase()
 
 # إعداد واجهة Streamlit
 st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
@@ -58,9 +62,9 @@ if start_button:
     raw_leads = asyncio.run(scraper.scrape_maps())
     
     if raw_leads:
-        st.success(f"تم بنجاح سحب {len(raw_leads)} شركة! جاري تفعيل محرك الزحف وتوليد الإيميلات وفحص الـ SMTP...")
+        st.success(f"تم بنجاح سحب {len(raw_leads)} شركة! جاري فحص قاعدة البيانات والتحقق من أصحاب القرار والإيميلات...")
         
-        crawler = SovereignCrawler()
+        crawler = SovereignCrawler(gemini_api_key=gemini_api_key)
         final_results = []
         progress_bar = st.progress(0)
         
@@ -69,28 +73,51 @@ if start_button:
             maps_link = comp["maps_link"]
             
             # استنتاج الدومين مبدئياً
-            clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "")
+            clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("bv", "")
             estimated_domain = f"{clean_comp_name}.com"
             
-            # 2. تشغيل المحرك الثاني (الزحف الداخلي وكشف صاحب القرار)
-            identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
-            owner = identity_data["owner_name"]
-            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
-            # 3. تشغيل المحرك الثالث (توليد مصفوفة الإيميلات)
-            permutations = crawler.generate_permutations(owner, estimated_domain)
-            best_email = permutations[0] if permutations else f"info@{estimated_domain}"
+            # التحقق مما إذا كانت الشركة مخزنة مسبقاً في قاعدة البيانات السيادية لتوفير الوقت
+            existing_lead = db.check_existing_lead(estimated_domain)
             
-            # 4. تشغيل المحرك الرابع (فحص الـ SMTP العميق)
-            smtp_status = verify_and_get_smart_email(best_email)
+            if existing_lead:
+                # استرجاع فوري من قاعدة البيانات دون إعادة فحص أو استهلاك موارد
+                owner = existing_lead["decision_maker"]
+                best_email = existing_lead["target_email"]
+                smtp_status = existing_lead["smtp_status"]
+                source = f"{existing_lead['source']} (من القاعدة المخزنة)"
+                permutations_str = best_email
+            else:
+                # 2. تشغيل المحرك الثاني (الزحف والذكاء الاصطناعي)
+                identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
+                owner = identity_data["owner_name"]
+                source = identity_data["source"]
+                
+                # 3. توليد وفحص الإيميلات عبر محرك الـ SMTP فائق الدقة
+                permutations = crawler.generate_permutations(owner, estimated_domain)
+                best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
+                
+                # 4. حفظ النتائج الجديدة نهائياً في قاعدة البيانات السيادية
+                lead_record = {
+                    "company_name": company_name,
+                    "domain": estimated_domain,
+                    "maps_link": maps_link,
+                    "city": city,
+                    "decision_maker": owner,
+                    "source": source,
+                    "target_email": best_email,
+                    "smtp_status": smtp_status
+                }
+                db.save_lead(lead_record)
+                permutations_str = ", ".join(permutations[:3]) if permutations else best_email
             
             final_results.append({
                 "اسم الشركة": company_name,
                 "رابط الخرائط": maps_link,
                 "صاحب القرار": owner,
-                "مصدر الكشف": identity_data["source"],
+                "مصدر الكشف": source,
                 "أفضل إيميل مؤكد": best_email,
                 "حالة فحص SMTP": smtp_status,
-                "جميع الاحتمالات": ", ".join(permutations[:3])
+                "جميع الاحتمالات": permutations_str
             })
             
             progress_bar.progress((i + 1) / len(raw_leads))
@@ -102,7 +129,7 @@ if start_button:
         if telegram_token and telegram_chat_id:
             try:
                 notifier = TelegramNotifier(telegram_token, telegram_chat_id)
-                summary_msg = f"🚀 *تم سحب وفحص شركات جديدة بنجاح!*\n📍 المدينة: {city}\n📊 عدد الشركات: {len(final_results)}\n✅ تم التأكد من إيميلات أصحاب القرار."
+                summary_msg = f"🚀 *تم سحب وفحص الشركات بنجاح عبر Verilogix AI!*\n📍 المدينة: {city}\n📊 عدد الشركات: {len(final_results)}\n✅ تم تأكيد إيميلات أصحاب القرار وحفظها بالسيادة الكاملة."
                 notifier.send_alert(summary_msg)
             except Exception as e:
                 st.warning(f"تعذر إرسال التنبيه: {e}")
