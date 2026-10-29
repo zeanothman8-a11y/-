@@ -1,6 +1,8 @@
 streamlit
 playwright
-google-generativeai
+pydantic
+tenacity
+dnspython
 pandas
-beautifulsoup4
+google-generativeai
 python-whois
