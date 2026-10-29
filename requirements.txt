@@ -1,9 +1,12 @@
 streamlit
-httpx
 playwright
-pydantic
+pydantic[email]
+email-validator
 tenacity
 dnspython
 pandas
 google-generativeai
 python-whois
+httpx
+beautifulsoup4
+requests
