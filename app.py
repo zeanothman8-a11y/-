@@ -81,7 +81,7 @@ if start_button:
             best_email = permutations[0] if permutations else f"info@{estimated_domain}"
             
             # 4. تشغيل المحرك الرابع (فحص الـ SMTP العميق)
-            smtp_status = verify_smtp_mailbox(best_email)
+            smtp_status = verify_and_get_smart_email(best_email)
             
             final_results.append({
                 "اسم الشركة": company_name,
