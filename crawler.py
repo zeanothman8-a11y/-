@@ -2,20 +2,16 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 import whois
-from urllib.parse import urlparse
+import google.generativeai as genai
 
 class SovereignCrawler:
-    def __init__(self):
+    def __init__(self, gemini_api_key: str = None):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
+        if gemini_api_key:
+            genai.configure(api_key=gemini_api_key)
 
-    # استخراج الموقع الإلكتروني والدومين الحقيقي للشركة من رابط الخرائط أو البحث
-    def extract_domain_from_maps(self, maps_link: str) -> str:
-        # محاولة استخلاص الدومين أو توليده افتراضياً بناءً على اسم الشركة
-        return ""
-
-    # المحرك الثاني: الزحف الداخلي (Internal Crawler) والبحث عن أصحاب القرار
     async def crawl_company_website(self, domain: str) -> dict:
         result = {
             "owner_name": "غير محدد",
@@ -27,10 +23,9 @@ class SovereignCrawler:
             return result
 
         clean_url = f"https://{domain}" if not domain.startswith("http") else domain
-        
-        # صفحات المستهدفين داخل أي موقع تجاري
         target_paths = ["", "/about", "/about-us", "/team", "/leadership", "/contact", "/management"]
         
+        combined_text = ""
         async with httpx.AsyncClient(headers=self.headers, timeout=10.0, follow_redirects=True) as client:
             for path in target_paths:
                 target_url = clean_url.rstrip("/") + path
@@ -38,20 +33,35 @@ class SovereignCrawler:
                     response = await client.get(target_url)
                     if response.status_code == 200:
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        
-                        # بحث ذكي عبر الكلمات المفتاحية عن المناصب الإدارية العليا
-                        text_content = soup.get_text()
-                        ceo_pattern = r"(?:CEO|Founder|Owner|Managing Director|Director|المدير التنفيذي|المؤسس)[:\s\-]+([A-Z][a-z]+\s[A-Z][a-z]+)"
-                        match = re.search(ceo_pattern, text_content)
-                        
-                        if match:
-                            result["owner_name"] = match.group(1)
-                            result["source"] = f"Internal Crawler ({path or 'Home'})"
-                            return result
+                        # إزالة النصوص غير الهامة لتوفير مساحة السياق
+                        for script in soup(["script", "style", "nav", "footer"]):
+                            script.extract()
+                        combined_text += f"\n--- Path: {path} ---\n" + soup.get_text()[:3000]
                 except Exception:
                     continue
 
-        # الطريقة البديلة المعقدة: فحص سجلات WHOIS للملكية الحرة (تفيد جداً في الشركات الصغيرة)
+        # الحل المعقد والمضمون: استخدام نموذج Gemini لتحليل النصوص واستخراج صاحب القرار بدقة مطلقة
+        if combined_text and genai:
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                prompt = f"""
+                Analyze the following website text extracted from a company's pages (About, Team, Leadership).
+                Find the full name of the CEO, Founder, Owner, Managing Director, or General Manager.
+                Return ONLY the full name. If you cannot find any decision maker with high certainty, return "غير محدد".
+                
+                Text content:
+                {combined_text[:10000]}
+                """
+                response = model.generate_content(prompt)
+                extracted_name = response.text.strip()
+                if extracted_name and extracted_name != "غير محدد" and len(extracted_name.split()) >= 2:
+                    result["owner_name"] = extracted_name
+                    result["source"] = "Gemini Semantic LLM Extraction"
+                    return result
+            except Exception as e:
+                print(f"LLM Extraction Error: {e}")
+
+        # الطريقة الاحتياطية: فحص سجلات WHOIS
         try:
             w = whois.whois(domain)
             if w.name:
@@ -65,7 +75,6 @@ class SovereignCrawler:
 
         return result
 
-    # المحرك الثالث: مصفوفة توليد الإيميلات الاحترافية العميقة
     def generate_permutations(self, owner_name: str, domain: str) -> list:
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
         permutations = []
@@ -78,10 +87,9 @@ class SovereignCrawler:
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
                     f"{first[0]}{last}@{clean_domain}",
-                    f"{first}@{last}@{clean_domain}"
+                    f"{first}@{clean_domain}"
                 ])
         
-        # الاحتمالات السيادية الافتراضية للشركات
         permutations.extend([
             f"ceo@{clean_domain}",
             f"info@{clean_domain}",
@@ -90,5 +98,5 @@ class SovereignCrawler:
             f"sales@{clean_domain}"
         ])
         
-        return list(dict.fromkeys(permutations)) # إزالة التكرار مع الحفاظ على الترتيب
-      
+        return list(dict.fromkeys(permutations))
+                        
