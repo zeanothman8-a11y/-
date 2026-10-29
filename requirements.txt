@@ -1,4 +1,5 @@
 streamlit
+httpx
 playwright
 pydantic
 tenacity
