@@ -14,6 +14,14 @@ from engine import verify_smtp_mailbox, generate_and_verify_leads
 from scraper import SovereignScraper
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from notifier import TelegramNotifier
+
+# بعد استخراج وتحليل النتائج بنجاح:
+if telegram_token and telegram_chat_id:
+    notifier = TelegramNotifier(telegram_token, telegram_chat_id)
+    summary_msg = f"🚀 *تم سحب وفحص شركات جديدة بنجاح!*\n📍 المدينة: {city}\n📊 عدد الشركات: {len(final_results)}\n✅ تم التأكد من إيميلات أصحاب القرار."
+    notifier.send_alert(summary_msg)
+    
 class SovereignCrawler:
     def __init__(self):
         self.headers = {
