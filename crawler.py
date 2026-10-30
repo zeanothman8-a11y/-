@@ -1,9 +1,8 @@
 import re
 import httpx
 from bs4 import BeautifulSoup
-import whois
-import google.generativeai as genai
 from urllib.parse import urlparse
+import google.generativeai as genai
 
 class SovereignCrawler:
     def __init__(self, gemini_api_key: str = None):
@@ -14,6 +13,18 @@ class SovereignCrawler:
             genai.configure(api_key=gemini_api_key)
 
     @staticmethod
+    def sanitize_company_name(company_name: str) -> str:
+        """
+        تطهير اسم الشركة وإزالة الرموز الخطيرة مثل & والمسافات الزائدة
+        """
+        # إزالة الرموز الخاصة
+        clean = re.sub(r'[^\w\s]', '', company_name)
+        # إزالة كلمات الشركات الشائعة لتوليد الدومين النظيف
+        stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group']
+        words = [w for w in clean.lower().split() if w not in stopwords]
+        return "".join(words), "-".join(words)
+
+    @staticmethod
     def extract_clean_domain(url_or_domain: str) -> str:
         if not url_or_domain:
             return ""
@@ -21,90 +32,50 @@ class SovereignCrawler:
         domain = parsed.netloc or parsed.path
         return domain.lower().replace("www.", "").strip("/")
 
-    def find_real_domain(self, company_name: str, city: str) -> str:
+    def find_real_domain_via_ct(self, company_name: str) -> str:
         """
-        البحث الذكي عن الدومين الحقيقي للشركة عبر محرك البحث لتجاوز التخمين الخاطئ
+        البحث الذكي العالي الدقة عبر سجلات الشهادات الرقمية (crt.sh API) لتجنب الحظر
         """
-        search_query = f"{company_name} {city} official website"
-        url = f"https://html.duckduckgo.com/html/?q={httpx.URL(search_query).params}"
+        compact_name, hyphen_name = self.sanitize_company_name(company_name)
+        if not compact_name:
+            return ""
         
-        ignored_domains = [
-            "facebook.com", "linkedin.com", "instagram.com", "twitter.com", 
-            "yelp.com", "yellowpages.com", "tripadvisor.com", "google.com", 
-            "wikipedia.org", "kompass.com", "trustpilot.com"
-        ]
-
+        # استعلام سجلات الـ SSL العالمية عبر HTTPS (منفذ 443 غير محظور)
+        url = f"https://crt.sh/?q=%{compact_name}%&output=json"
         try:
-            response = httpx.get(url, headers=self.headers, timeout=6.0)
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                results = soup.select('.result__url')
-                for res in results:
-                    raw_url = res.get('href', '')
-                    # استخراج الرابط الحقيقي من تحويلات محرك البحث
-                    if "uddg=" in raw_url:
-                        import urllib.parse
-                        parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(raw_url).query)
-                        if "uddg" in parsed_q:
-                            raw_url = parsed_q["uddg"][0]
-                    
-                    clean_d = self.extract_clean_domain(raw_url)
-                    if clean_d and not any(ign in clean_d for ign in ignored_domains):
-                        return clean_d
-        except Exception as e:
-            print(f"Domain Search Error: {e}")
+                data = response.json()
+                ignored_keywords = ["google", "facebook", "apple", "microsoft", "amazon", "github", "cloudflare"]
+                
+                for entry in data:
+                    name_value = entry.get("name_value", "").lower()
+                    # استخراج أول دومين صالح غير فرعي معقد
+                    domains = name_value.split("\n")
+                    for d in domains:
+                        d = d.strip().replace("*.", "")
+                        if d and not any(ign in d for ign in ignored_keywords) and len(d.split('.')) == 2:
+                            if compact_name in d or hyphen_name in d.replace("-", ""):
+                                return d
+        except Exception:
+            pass
             
         return ""
 
     async def crawl_company_website(self, company_name: str, city: str) -> dict:
-        # 1. البحث عن الدومين الحقيقي بدلاً من التخمين
-        real_domain = self.find_real_domain(company_name, city)
+        real_domain = self.find_real_domain_via_ct(company_name)
         
         result = {
             "owner_name": "غير محدد",
             "extracted_domain": real_domain,
-            "source": "DuckDuckGo Real Search" if real_domain else "None"
+            "source": "CT Logs (SSL Intelligence)" if real_domain else "Fallback Pattern"
         }
         
         if not real_domain:
-            return result
-
-        clean_url = f"https://{real_domain}"
-        target_paths = ["", "/about", "/about-us", "/team", "/leadership", "/contact"]
-        
-        combined_text = ""
-        async with httpx.AsyncClient(headers=self.headers, timeout=8.0, follow_redirects=True, verify=False) as client:
-            for path in target_paths:
-                target_url = clean_url.rstrip("/") + path
-                try:
-                    response = await client.get(target_url)
-                    if response.status_code == 200:
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        for script in soup(["script", "style", "nav", "footer"]):
-                            script.extract()
-                        combined_text += f"\n--- Path: {path} ---\n" + soup.get_text()[:2500]
-                except Exception:
-                    continue
-
-        if combined_text:
-            try:
-                model = genai.GenerativeModel('gemini-2.5-flash')
-                prompt = f"""
-                Analyze the following website text extracted from a company's pages.
-                Find the full name of the CEO, Founder, Owner, Managing Director, or General Manager.
-                Return ONLY the full name. If you cannot find any decision maker with high certainty, return "غير محدد".
-                
-                Text content:
-                {combined_text[:8000]}
-                """
-                response = model.generate_content(prompt)
-                extracted_name = response.text.strip()
-                if extracted_name and extracted_name != "غير محدد" and len(extracted_name.split()) >= 2:
-                    result["owner_name"] = extracted_name
-                    result["source"] = "Gemini AI Semantic Search"
-                    return result
-            except Exception as e:
-                print(f"LLM Error: {e}")
+            compact, hyphen = self.sanitize_company_name(company_name)
+            tld = ".co.uk" if "uk" in city.lower() or "london" in city.lower() else ".com"
+            real_domain = f"{compact}{tld}"
+            result["extracted_domain"] = real_domain
 
         return result
 
@@ -121,17 +92,13 @@ class SovereignCrawler:
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
                     f"{first[0]}{last}@{clean_domain}",
-                    f"{first}@{clean_domain}",
-                    f"{last}.{first}@{clean_domain}"
+                    f"{first}@{clean_domain}"
                 ])
         
         permutations.extend([
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
-            f"sales@{clean_domain}",
-            f"management@{clean_domain}",
-            f"enquiries@{clean_domain}"
+            f"sales@{clean_domain}"
         ])
-        
         return list(dict.fromkeys(permutations))
-    
+        
