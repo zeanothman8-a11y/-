@@ -25,7 +25,7 @@ except Exception:
 if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
 
-# تثبيت متصفح Playwright تلقائياً على السيرفر السحابي بأمان[span_2](start_span)[span_2](end_span)
+# تثبيت متصفح Playwright تلقائياً على السيرفر السحابي
 @st.cache_resource
 def install_playwright():
     try:
@@ -35,10 +35,10 @@ def install_playwright():
 
 install_playwright()
 
-# تهيئة قاعدة البيانات السيادية[span_3](start_span)[span_3](end_span)
+# تهيئة قاعدة البيانات السيادية
 db = SovereignDatabase()
 
-# إعداد واجهة Streamlit[span_4](start_span)[span_4](end_span)
+# إعداد واجهة Streamlit
 st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
 st.title("🛰️ نظام Verilogix AI السيادي: صائد الشركات وأصحاب القرار")
 
@@ -68,45 +68,48 @@ if start_button:
         crawler = SovereignCrawler(gemini_api_key=gemini_api_key)
         final_results = []
         progress_bar = st.progress(0)
-                for i, comp in enumerate(raw_leads):
-                    company_name = comp["company_name"]
-                    maps_link = comp["maps_link"]
+        
+        for i, comp in enumerate(raw_leads):
+            company_name = comp["company_name"]
+            maps_link = comp["maps_link"]
             
-                    clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("bv", "")
-                    estimated_domain = f"{clean_comp_name}.com"
+            clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("bv", "")
+            estimated_domain = f"{clean_comp_name}.com"
             
-             # تم إلغاء التحقق من القاعدة المخزنة لإجبار النظام على جلب وتحديث البيانات في كل ضغطة
-                    identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
-                    owner = identity_data["owner_name"]
-                    source = identity_data["source"]
+            # جلب وإعادة فحص البيانات حياً في كل مرة دون التوقف عند التخزين السابق
+            identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
+            owner = identity_data["owner_name"]
+            source = identity_data["source"]
             
-                    permutations = crawler.generate_permutations(owner, estimated_domain)
-                    best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
+            permutations = crawler.generate_permutations(owner, estimated_domain)
+            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
             
-            # تحديث السجل في القاعدة بالنتائج الجديدة
-                    lead_record = {
-                        "company_name": company_name,
-                        "domain": estimated_domain,
-                        "maps_link": maps_link,
-                        "city": city,
-                        "decision_maker": owner,
-                        "source": source,
-                        "target_email": best_email,
-                        "smtp_status": smtp_status
-                    }
-                    db.save_lead(lead_record)
-                    permutations_str = ", ".join(permutations[:3]) if permutations else best_email
-                    final_results.append({
-                        "اسم الشركة": company_name,
-                        "رابط الخرائط": maps_link,
-                        "صاحب القرار": owner,
-                        "مصدر الكشف": source,
-                        "أفضل إيميل مؤكد": best_email,
-                        "حالة فحص SMTP": smtp_status,
-                        "جميع الاحتمالات": permutations_str
-                    })
-                    progress_bar.progress((i + 1) / len(raw_leads))
-                    df = pd.DataFrame(final_results)
+            lead_record = {
+                "company_name": company_name,
+                "domain": estimated_domain,
+                "maps_link": maps_link,
+                "city": city,
+                "decision_maker": owner,
+                "source": source,
+                "target_email": best_email,
+                "smtp_status": smtp_status
+            }
+            db.save_lead(lead_record)
+            permutations_str = ", ".join(permutations[:3]) if permutations else best_email
+            
+            final_results.append({
+                "اسم الشركة": company_name,
+                "رابط الخرائط": maps_link,
+                "صاحب القرار": owner,
+                "مصدر الكشف": source,
+                "أفضل إيميل مؤكد": best_email,
+                "حالة فحص SMTP": smtp_status,
+                "جميع الاحتمالات": permutations_str
+            })
+            
+            progress_bar.progress((i + 1) / len(raw_leads))
+            
+        df = pd.DataFrame(final_results)
         
         # تطبيق الفلترة المتقدمة بناءً على رغبة المستخدم
         if only_high_confidence:
