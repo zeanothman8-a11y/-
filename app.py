@@ -55,9 +55,13 @@ if start_button:
             company_name = comp["company_name"]
             maps_link = comp["maps_link"]
             
-            # تنظيف الاسم لتوليد دومين أساسي بحال عدم إيجاد الدومين المباشر
             clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("ltd", "").replace("uk", "").replace("limited", "")
-            estimated_domain = crawler.extract_clean_domain(f"{clean_comp_name}.co.uk") if "uk" in city.lower() else crawler.extract_clean_domain(f"{clean_comp_name}.com")
+            
+            # استدعاء دالة التنظيف بالطريقة الصحيحة من الكلاس
+            if "uk" in city.lower():
+                estimated_domain = SovereignCrawler.extract_clean_domain(f"{clean_comp_name}.co.uk")
+            else:
+                estimated_domain = SovereignCrawler.extract_clean_domain(f"{clean_comp_name}.com")
             
             identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
             owner = identity_data["owner_name"]
