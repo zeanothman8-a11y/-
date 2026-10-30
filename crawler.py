@@ -3,6 +3,7 @@ import httpx
 from bs4 import BeautifulSoup
 import whois
 import google.generativeai as genai
+from urllib.parse import urlparse
 
 class SovereignCrawler:
     def __init__(self, gemini_api_key: str = None):
@@ -12,21 +13,32 @@ class SovereignCrawler:
         if gemini_api_key:
             genai.configure(api_key=gemini_api_key)
 
+    @staticmethod
+    def extract_clean_domain(url_or_domain: str) -> str:
+        """استخراج وتنظيف الدومين الحقيقي بدون بروتوكولات أو بادئات"""
+        if not url_or_domain:
+            return ""
+        parsed = urlparse(url_or_domain if "://" in url_or_domain else f"http://{url_or_domain}")
+        domain = parsed.netloc or parsed.path
+        domain = domain.lower().replace("www.", "").strip("/")
+        return domain
+
     async def crawl_company_website(self, domain: str) -> dict:
+        clean_domain = self.extract_clean_domain(domain)
         result = {
             "owner_name": "غير محدد",
-            "extracted_domain": domain,
+            "extracted_domain": clean_domain,
             "source": "None"
         }
         
-        if not domain:
+        if not clean_domain:
             return result
 
-        clean_url = f"https://{domain}" if not domain.startswith("http") else domain
-        target_paths = ["", "/about", "/about-us", "/team", "/leadership", "/contact", "/management"]
+        clean_url = f"https://{clean_domain}"
+        target_paths = ["", "/about", "/about-us", "/team", "/leadership", "/contact"]
         
         combined_text = ""
-        async with httpx.AsyncClient(headers=self.headers, timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=self.headers, timeout=8.0, follow_redirects=True, verify=False) as client:
             for path in target_paths:
                 target_url = clean_url.rstrip("/") + path
                 try:
@@ -35,48 +47,35 @@ class SovereignCrawler:
                         soup = BeautifulSoup(response.text, 'html.parser')
                         for script in soup(["script", "style", "nav", "footer"]):
                             script.extract()
-                        combined_text += f"\n--- Path: {path} ---\n" + soup.get_text()[:3000]
+                        combined_text += f"\n--- Path: {path} ---\n" + soup.get_text()[:2500]
                 except Exception:
                     continue
 
-        # 1. استخراج صاحب القرار عبر نموذج Gemini
         if combined_text:
             try:
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 prompt = f"""
-                Analyze the following website text extracted from a company's pages (About, Team, Leadership).
+                Analyze the following website text extracted from a company's pages.
                 Find the full name of the CEO, Founder, Owner, Managing Director, or General Manager.
                 Return ONLY the full name. If you cannot find any decision maker with high certainty, return "غير محدد".
                 
                 Text content:
-                {combined_text[:10000]}
+                {combined_text[:8000]}
                 """
                 response = model.generate_content(prompt)
                 extracted_name = response.text.strip()
                 if extracted_name and extracted_name != "غير محدد" and len(extracted_name.split()) >= 2:
                     result["owner_name"] = extracted_name
-                    result["source"] = "Gemini Semantic LLM Extraction"
+                    result["source"] = "Gemini AI Semantic Search"
                     return result
             except Exception as e:
-                print(f"LLM Extraction Error: {e}")
-
-        # 2. الطريقة الاحتياطية الأولى: فحص سجلات WHOIS
-        try:
-            w = whois.whois(domain)
-            if w.name:
-                owner = w.name if isinstance(w.name, str) else w.name[0]
-                if len(owner.split()) >= 2:
-                    result["owner_name"] = owner
-                    result["source"] = "WHOIS Database Registry"
-                    return result
-        except Exception:
-            pass
+                print(f"LLM Error: {e}")
 
         return result
 
     @staticmethod
     def generate_permutations(owner_name: str, domain: str) -> list:
-        clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
+        clean_domain = SovereignCrawler.extract_clean_domain(domain)
         permutations = []
         
         if owner_name and owner_name != "غير محدد":
@@ -92,13 +91,12 @@ class SovereignCrawler:
                 ])
         
         permutations.extend([
-            f"ceo@{clean_domain}",
-            f"director@{clean_domain}",
-            f"management@{clean_domain}",
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
-            f"sales@{clean_domain}"
+            f"sales@{clean_domain}",
+            f"management@{clean_domain}",
+            f"enquiries@{clean_domain}"
         ])
         
         return list(dict.fromkeys(permutations))
-                    
+        
