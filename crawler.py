@@ -39,7 +39,7 @@ class SovereignCrawler:
                 except Exception:
                     continue
 
-        # استخدام نموذج Gemini لتحليل النصوص واستخراج صاحب القرار بدقة مطلقة
+        # 1. استخراج صاحب القرار عبر نموذج Gemini
         if combined_text:
             try:
                 model = genai.GenerativeModel('gemini-1.5-flash')
@@ -60,7 +60,7 @@ class SovereignCrawler:
             except Exception as e:
                 print(f"LLM Extraction Error: {e}")
 
-        # الطريقة الاحتياطية: فحص سجلات WHOIS
+        # 2. الطريقة الاحتياطية الأولى: فحص سجلات WHOIS
         try:
             w = whois.whois(domain)
             if w.name:
@@ -74,7 +74,8 @@ class SovereignCrawler:
 
         return result
 
-    def generate_permutations(self, owner_name: str, domain: str) -> list:
+    @staticmethod
+    def generate_permutations(owner_name: str, domain: str) -> list:
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
         permutations = []
         
@@ -86,16 +87,18 @@ class SovereignCrawler:
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
                     f"{first[0]}{last}@{clean_domain}",
-                    f"{first}@{clean_domain}"
+                    f"{first}@{clean_domain}",
+                    f"{last}.{first}@{clean_domain}"
                 ])
         
         permutations.extend([
             f"ceo@{clean_domain}",
+            f"director@{clean_domain}",
+            f"management@{clean_domain}",
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
-            f"operations@{clean_domain}",
             f"sales@{clean_domain}"
         ])
         
         return list(dict.fromkeys(permutations))
-                
+                    
