@@ -68,56 +68,45 @@ if start_button:
         crawler = SovereignCrawler(gemini_api_key=gemini_api_key)
         final_results = []
         progress_bar = st.progress(0)
-        
-        for i, comp in enumerate(raw_leads):
-            company_name = comp["company_name"]
-            maps_link = comp["maps_link"]
+                for i, comp in enumerate(raw_leads):
+                    company_name = comp["company_name"]
+                    maps_link = comp["maps_link"]
             
-            clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("bv", "")
-            estimated_domain = f"{clean_comp_name}.com"
+                    clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("inc", "").replace("llc", "").replace("bv", "")
+                    estimated_domain = f"{clean_comp_name}.com"
             
-            existing_lead = db.check_existing_lead(estimated_domain)
+             # تم إلغاء التحقق من القاعدة المخزنة لإجبار النظام على جلب وتحديث البيانات في كل ضغطة
+                    identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
+                    owner = identity_data["owner_name"]
+                    source = identity_data["source"]
             
-            if existing_lead:
-                owner = existing_lead["decision_maker"]
-                best_email = existing_lead["target_email"]
-                smtp_status = existing_lead["smtp_status"]
-                source = f"{existing_lead['source']} (من القاعدة المخزنة)"
-                permutations_str = best_email
-            else:
-                identity_data = asyncio.run(crawler.crawl_company_website(estimated_domain))
-                owner = identity_data["owner_name"]
-                source = identity_data["source"]
-                
-                permutations = crawler.generate_permutations(owner, estimated_domain)
-                best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
-                
-                lead_record = {
-                    "company_name": company_name,
-                    "domain": estimated_domain,
-                    "maps_link": maps_link,
-                    "city": city,
-                    "decision_maker": owner,
-                    "source": source,
-                    "target_email": best_email,
-                    "smtp_status": smtp_status
-                }
-                db.save_lead(lead_record)
-                permutations_str = ", ".join(permutations[:3]) if permutations else best_email
+                    permutations = crawler.generate_permutations(owner, estimated_domain)
+                    best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
             
-            final_results.append({
-                "اسم الشركة": company_name,
-                "رابط الخرائط": maps_link,
-                "صاحب القرار": owner,
-                "مصدر الكشف": source,
-                "أفضل إيميل مؤكد": best_email,
-                "حالة فحص SMTP": smtp_status,
-                "جميع الاحتمالات": permutations_str
-            })
-            
-            progress_bar.progress((i + 1) / len(raw_leads))
-            
-        df = pd.DataFrame(final_results)
+            # تحديث السجل في القاعدة بالنتائج الجديدة
+                    lead_record = {
+                        "company_name": company_name,
+                        "domain": estimated_domain,
+                        "maps_link": maps_link,
+                        "city": city,
+                        "decision_maker": owner,
+                        "source": source,
+                        "target_email": best_email,
+                        "smtp_status": smtp_status
+                    }
+                    db.save_lead(lead_record)
+                    permutations_str = ", ".join(permutations[:3]) if permutations else best_email
+                    final_results.append({
+                        "اسم الشركة": company_name,
+                        "رابط الخرائط": maps_link,
+                        "صاحب القرار": owner,
+                        "مصدر الكشف": source,
+                        "أفضل إيميل مؤكد": best_email,
+                        "حالة فحص SMTP": smtp_status,
+                        "جميع الاحتمالات": permutations_str
+                    })
+                    progress_bar.progress((i + 1) / len(raw_leads))
+                    df = pd.DataFrame(final_results)
         
         # تطبيق الفلترة المتقدمة بناءً على رغبة المستخدم
         if only_high_confidence:
