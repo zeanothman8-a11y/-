@@ -15,13 +15,11 @@ class SovereignCrawler:
 
     @staticmethod
     def extract_clean_domain(url_or_domain: str) -> str:
-        """استخراج وتنظيف الدومين الحقيقي بدون بروتوكولات أو بادئات"""
         if not url_or_domain:
             return ""
         parsed = urlparse(url_or_domain if "://" in url_or_domain else f"http://{url_or_domain}")
         domain = parsed.netloc or parsed.path
-        domain = domain.lower().replace("www.", "").strip("/")
-        return domain
+        return domain.lower().replace("www.", "").strip("/")
 
     async def crawl_company_website(self, domain: str) -> dict:
         clean_domain = self.extract_clean_domain(domain)
@@ -53,7 +51,8 @@ class SovereignCrawler:
 
         if combined_text:
             try:
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # استخدام النموذج المحدث لتفادي خطأ 404
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 prompt = f"""
                 Analyze the following website text extracted from a company's pages.
                 Find the full name of the CEO, Founder, Owner, Managing Director, or General Manager.
@@ -99,4 +98,4 @@ class SovereignCrawler:
         ])
         
         return list(dict.fromkeys(permutations))
-        
+                
