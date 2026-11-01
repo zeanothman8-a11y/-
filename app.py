@@ -79,8 +79,7 @@ max_results = st.number_input("الحد الأقصى للنتائج:", min_value
         })
             
         progress_bar.progress((i + 1) / len(raw_leads))
-            
-start_button = st.button("🚀 بدء المحركات السيادية المتكاملة")
+        start_button = st.button("🚀 بدء المحركات السيادية المتكاملة")
 
 if start_button:
     st.info(f"🔍 جاري تشغيل محرك السحب لمدينة: {city}...")
