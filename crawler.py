@@ -9,19 +9,20 @@ class SovereignCrawler:
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
+        self.gemini_api_key = gemini_api_key
         if gemini_api_key:
             genai.configure(api_key=gemini_api_key)
 
     @staticmethod
     def sanitize_company_name(company_name: str) -> str:
         """
-        تطهير اسم الشركة وإزالة الرموز الخطيرة مثل & والمسافات الزائدة
+        تطهير اسم الشركة وإزالة الرموز لتوليد دومين نظيف
         """
-        # إزالة الرموز الخاصة
         clean = re.sub(r'[^\w\s]', '', company_name)
-        # إزالة كلمات الشركات الشائعة لتوليد الدومين النظيف
-        stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group']
+        stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group', 'logistics', 'transport', 'shipping']
         words = [w for w in clean.lower().split() if w not in stopwords]
+        if not words:
+            words = clean.lower().split()
         return "".join(words), "-".join(words)
 
     @staticmethod
@@ -34,23 +35,21 @@ class SovereignCrawler:
 
     def find_real_domain_via_ct(self, company_name: str) -> str:
         """
-        البحث الذكي العالي الدقة عبر سجلات الشهادات الرقمية (crt.sh API) لتجنب الحظر
+        البحث الذكي عبر سجلات الشهادات الرقمية (crt.sh API) للتعرف على الدومين الحقيقي
         """
         compact_name, hyphen_name = self.sanitize_company_name(company_name)
         if not compact_name:
             return ""
         
-        # استعلام سجلات الـ SSL العالمية عبر HTTPS (منفذ 443 غير محظور)
         url = f"https://crt.sh/?q=%{compact_name}%&output=json"
         try:
-            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            response = httpx.get(url, headers=self.headers, timeout=8.0)
             if response.status_code == 200:
                 data = response.json()
                 ignored_keywords = ["google", "facebook", "apple", "microsoft", "amazon", "github", "cloudflare"]
                 
                 for entry in data:
                     name_value = entry.get("name_value", "").lower()
-                    # استخراج أول دومين صالح غير فرعي معقد
                     domains = name_value.split("\n")
                     for d in domains:
                         d = d.strip().replace("*.", "")
@@ -62,22 +61,70 @@ class SovereignCrawler:
             
         return ""
 
-    async def crawl_company_website(self, company_name: str, city: str) -> dict:
-        real_domain = self.find_real_domain_via_ct(company_name)
+    def find_decision_maker_social(self, company_name: str) -> dict:
+        """
+        بحث هندسي متقدم عبر DuckDuckGo للعثور على حساب لينكد إن الخاص بالمدير التنفيذي أو المؤسس
+        """
+        query = f'site:linkedin.com/in/ ("CEO" OR "Founder" OR "Managing Director" OR "Owner" OR "Director") "{company_name}"'
+        search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL(query).params}"
         
         result = {
-            "owner_name": "غير محدد",
-            "extracted_domain": real_domain,
-            "source": "CT Logs (SSL Intelligence)" if real_domain else "Fallback Pattern"
+            "executive_name": "غير محدد",
+            "linkedin_profile": "",
+            "confidence": 0
         }
-        
+
+        try:
+            response = httpx.get(search_url, headers=self.headers, timeout=8.0)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                results = soup.select('.result__url')
+                
+                for res in results:
+                    raw_url = res.get('href', '')
+                    if "uddg=" in raw_url:
+                        import urllib.parse
+                        parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(raw_url).query)
+                        if "uddg" in parsed_q:
+                            raw_url = parsed_q["uddg"][0]
+                    
+                    if "linkedin.com/in/" in raw_url:
+                        result["linkedin_profile"] = raw_url
+                        
+                        # محاولة استخراج اسم الشخص تلقائياً من رابط لينكد إن (Slug)
+                        slug = raw_url.split("linkedin.com/in/")[-1].split("/")[0]
+                        clean_slug = slug.split('-')
+                        name_parts = [w.capitalize() for w in clean_slug if not w.isdigit() and len(w) > 1 and w not in ['ceo', 'founder', 'owner', 'director', 'logistics', 'transport']]
+                        
+                        if len(name_parts) >= 2:
+                            result["executive_name"] = " ".join(name_parts[:2])
+                        
+                        result["confidence"] = 90
+                        break
+        except Exception as e:
+            print(f"Executive Hunt Error: {e}")
+
+        return result
+
+    async def crawl_company_website(self, company_name: str, city: str) -> dict:
+        # 1. جلب الدومين الحقيقي
+        real_domain = self.find_real_domain_via_ct(company_name)
         if not real_domain:
             compact, hyphen = self.sanitize_company_name(company_name)
             tld = ".co.uk" if "uk" in city.lower() or "london" in city.lower() else ".com"
             real_domain = f"{compact}{tld}"
-            result["extracted_domain"] = real_domain
 
-        return result
+        # 2. البحث عن صاحب القرار عبر لينكد إن
+        social_data = self.find_decision_maker_social(company_name)
+        owner_name = social_data["executive_name"]
+        source = "LinkedIn Dorks + CT Logs" if owner_name != "غير محدد" else "CT Logs Only"
+
+        return {
+            "owner_name": owner_name,
+            "extracted_domain": real_domain,
+            "linkedin_profile": social_data.get("linkedin_profile", ""),
+            "source": source
+        }
 
     @staticmethod
     def generate_permutations(owner_name: str, domain: str) -> list:
@@ -98,7 +145,8 @@ class SovereignCrawler:
         permutations.extend([
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
-            f"sales@{clean_domain}"
+            f"sales@{clean_domain}",
+            f"operations@{clean_domain}"
         ])
         return list(dict.fromkeys(permutations))
         
