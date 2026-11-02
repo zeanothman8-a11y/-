@@ -105,10 +105,10 @@ if start_button:
         
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 تحميل النتائج بصيغة CSV",
+            label="📥 تحميل النتائج بصيغة xlsx",
             data=csv_data,
-            file_name=f"verilogix_leads_{city}.csv",
-            mime="text/csv"
+            file_name=f"verilogix_leads_{city}.xlsx",
+            mime="xlsx"
         )
     else:
         st.error("لم يتم العثور على نتائج.")
