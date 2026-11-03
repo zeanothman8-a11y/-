@@ -16,7 +16,7 @@ class SovereignCrawler:
     @staticmethod
     def sanitize_company_name(company_name: str) -> str:
         clean = re.sub(r'[^\w\s]', '', company_name)
-        stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group', 'logistics', 'transport', 'shipping']
+        stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group', 'logistics', 'transport', 'shipping', 'services', 'international']
         words = [w for w in clean.lower().split() if w not in stopwords]
         if not words:
             words = clean.lower().split()
@@ -30,9 +30,19 @@ class SovereignCrawler:
         domain = parsed.netloc or parsed.path
         return domain.lower().replace("www.", "").strip("/")
 
+    @staticmethod
+    def is_spam_or_invalid_domain(domain: str) -> bool:
+        """
+        فلترة النطاقات المشبوهة، الكازينوهات، أو الدومينات الطويلة جداً التي تسبب الارتداد (Bounce)
+        """
+        if not domain or len(domain) > 45 or len(domain.split('.')) > 3:
+            return True
+        spam_keywords = ["casino", "bet", "xxx", "porn", "slot", "game", "shop"]
+        return any(kw in domain.lower() for kw in spam_keywords)
+
     def find_real_domain_via_ct(self, company_name: str) -> str:
         compact_name, hyphen_name = self.sanitize_company_name(company_name)
-        if not compact_name:
+        if not compact_name or len(compact_name) > 30:
             return ""
         
         url = f"https://crt.sh/?q=%{compact_name}%&output=json"
@@ -48,7 +58,7 @@ class SovereignCrawler:
                     for d in domains:
                         d = d.strip().replace("*.", "")
                         if d and not any(ign in d for ign in ignored_keywords) and len(d.split('.')) == 2:
-                            if compact_name in d or hyphen_name in d.replace("-", ""):
+                            if (compact_name in d or hyphen_name in d.replace("-", "")) and not self.is_spam_or_invalid_domain(d):
                                 return d
         except Exception:
             pass
@@ -94,11 +104,29 @@ class SovereignCrawler:
 
         return result
 
+    def scrape_onsite_emails(self, domain: str) -> list:
+        """
+        الزحف العميق داخل صفحات الموقع الرسمي (/contact, /about, /team) لاستخراج إيميلات حقيقية
+        """
+        found_emails = set()
+        paths = ["", "/contact", "/contact-us", "/about", "/about-us", "/team"]
+        email_regex = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
+
+        for path in paths:
+            url = f"https://{domain}{path}"
+            try:
+                res = httpx.get(url, headers=self.headers, timeout=5.0, follow_redirects=True)
+                if res.status_code == 200:
+                    emails = re.findall(email_regex, res.text)
+                    for em in emails:
+                        em_lower = em.lower()
+                        if domain in em_lower and not any(ext in em_lower for ext in ['.png', '.jpg', '.gif', 'example', 'domain']):
+                            found_emails.add(em_lower)
+            except Exception:
+                continue
+        return list(found_emails)
+
     def check_archive_dorks(self, domain: str, company_name: str) -> bool:
-        """
-        استراتيجية الكشط الأرشيفي العميق (Cache & PDF Dorks)
-        البحث في ملفات PDF والعقود أو الصفحات المؤرشفة القديمة في الويب عن وجود بصمة للإيميل أو الدومين.
-        """
         clean_domain = self.extract_clean_domain(domain)
         if not clean_domain:
             return False
@@ -121,34 +149,45 @@ class SovereignCrawler:
         return False
 
     async def crawl_company_website(self, company_name: str, city: str) -> dict:
-        # 1. جلب الدومين الحقيقي
+        # 1. جلب الدومين الحقيقي مع منع الدومينات الوهمية والمشبوهة
         real_domain = self.find_real_domain_via_ct(company_name)
-        if not real_domain:
+        if not real_domain or self.is_spam_or_invalid_domain(real_domain):
             compact, hyphen = self.sanitize_company_name(company_name)
             tld = ".co.uk" if "uk" in city.lower() or "london" in city.lower() else ".com"
-            real_domain = f"{compact}{tld}"
+            candidate = f"{compact}{tld}"
+            if self.is_spam_or_invalid_domain(candidate) or len(compact) > 25:
+                real_domain = "" # رفض القاطع للدومينات الوهمية الطويلة
+            else:
+                real_domain = candidate
 
         # 2. البحث عن صاحب القرار عبر لينكد إن
         social_data = self.find_decision_maker_social(company_name)
         owner_name = social_data["executive_name"]
         
         # 3. الفحص الأرشيفي العميق عبر Dorks
-        found_in_dorks = self.check_archive_dorks(real_domain, company_name)
+        found_in_dorks = self.check_archive_dorks(real_domain, company_name) if real_domain else False
         
+        # 4. البحث المباشر عن إيميلات في موقع الشركة
+        onsite_emails = self.scrape_onsite_emails(real_domain) if real_domain else []
+
         source_parts = []
         if owner_name != "غير محدد":
             source_parts.append("LinkedIn Dorks")
-        source_parts.append("CT Logs")
+        if real_domain:
+            source_parts.append("CT Logs")
         if found_in_dorks:
             source_parts.append("Deep Archive Dorks")
+        if onsite_emails:
+            source_parts.append("On-site Scrape")
             
-        source = " + ".join(source_parts)
+        source = " + ".join(source_parts) if source_parts else "Direct"
 
         return {
             "owner_name": owner_name,
             "extracted_domain": real_domain,
             "linkedin_profile": social_data.get("linkedin_profile", ""),
             "found_in_dorks": found_in_dorks,
+            "onsite_emails": onsite_emails,
             "source": source
         }
 
@@ -171,11 +210,9 @@ class SovereignCrawler:
                 ])
         
         permutations.extend([
-            f"operations@{clean_domain}",
-            f"dispatch@{clean_domain}",
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
             f"sales@{clean_domain}"
         ])
         return list(dict.fromkeys(permutations))
-                        
+        
