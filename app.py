@@ -116,17 +116,17 @@ if start_button:
             col2.metric("الإيميلات المتاحة", len(df))
             st.dataframe(df, use_container_width=True)
             # تصحيح طريقة حفظ وتصدير ملف الإكسل عبر BytesIO
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Verilogix Leads')
-    buffer.seek(0)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Verilogix Leads')
+            buffer.seek(0)
 
-    st.download_button(
-        label="📥 تحميل النتائج بصيغة xlsx",
-        data=buffer,
-        file_name=f"verilogix_leads_{city}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            st.download_button(
+                label="📥 تحميل النتائج بصيغة xlsx",
+                data=buffer,
+                file_name=f"verilogix_leads_{city}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
     
         else:
             st.warning("⚠️ جميع الشركات المستخرجة موجودة مسبقاً في قاعدة البيانات! لم يتم إضافة شركات جديدة في هذه الدورة.")
