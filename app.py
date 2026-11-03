@@ -30,23 +30,23 @@ install_playwright()
 
 db = SovereignDatabase()
 
-st.set_page_config(page_title="Verilogix AI Engine", layout="wide")
-st.title("🛰️ نظام Verilogix AI السيادي: صائد الشركات وأصحاب القرار")
+st.set_page_config(page_title="Verilogix AI Engine Pro", layout="wide")
+st.title("🛰️ نظام Verilogix AI السيادي الاحترافي: صائد الشركات النظيف")
 
-st.sidebar.header("⚙️ إعدادات البحث")
+st.sidebar.header("⚙️ إعدادات البحث السيادي")
 city = st.text_input("أدخل اسم المدينة والدولة:", "London, UK")
 keyword = st.text_input("الكلمة المفتاحية لنوع الشركة:", "Logistics companies")
-max_results = st.number_input("الحد الأقصى للنتائج الجديدة:", min_value=5, max_value=50, value=10, step=5)
+max_results = st.number_input("الحد الأقصى للنتائج المستهدفة:", min_value=5, max_value=50, value=10, step=5)
 
-start_button = st.button("🚀 بدء المحركات السيادية المتكاملة")
+start_button = st.button("🚀 بدء المحركات السيادية الصارمة (Level 3.0)")
 if start_button:
-    st.info(f"🔍 جاري تشغيل محرك السحب لمدينة: {city}...")
+    st.info(f"🔍 جاري تشغيل محرك السحب الذكي لمدينة: {city}...")
     
-    scraper = SovereignScraper(city=city, keyword=keyword, max_results=int(max_results) * 2) # سحب عدد أكبر لضمان وجود شركات جديدة غير مخزنة
+    scraper = SovereignScraper(city=city, keyword=keyword, max_results=int(max_results) * 3) # سحب مضاعف للفلترة القوية
     raw_leads = asyncio.run(scraper.scrape_maps())
     
     if raw_leads:
-        st.success(f"تم سحب {len(raw_leads)} شركة مبدئياً من الخرائط. جاري الفلترة وتخطي المسجل مسبقاً...")
+        st.success(f"تم سحب {len(raw_leads)} شركة مبدئياً من الخرائط. جاري التحليل والفلترة العميقة...")
         
         crawler = SovereignCrawler(gemini_api_key=gemini_api_key)
         final_results = []
@@ -59,16 +59,19 @@ if start_button:
 
             company_name = comp["company_name"]
             maps_link = comp["maps_link"]
-                        # استخراج بيانات الهوية والدومين والبحث الأرشيفي العميق
+            
+            # 1. استخراج الهوية، الدومين الحقيقي، والإيميلات المباشرة من الموقع
             identity_data = asyncio.run(crawler.crawl_company_website(company_name, city))
             estimated_domain = identity_data["extracted_domain"]
-            found_in_dorks = identity_data.get("found_in_dorks", False) # استلام حالة الـ Dorks
+            found_in_dorks = identity_data.get("found_in_dorks", False)
+            onsite_emails = identity_data.get("onsite_emails", [])
             
+            # منع حفظ الشركات التي ليس لها دومين حقيقي موثوق
             if not estimated_domain:
-                clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("ltd", "").replace("limited", "")
-                estimated_domain = f"{clean_comp_name}.co.uk" if "uk" in city.lower() else f"{clean_comp_name}.com"
+                print(f"[*] استبعاد الشركة لعدم وجود دومين حقيقي موثوق: {company_name}")
+                continue
 
-            # منع التكرار
+            # منع التكرار في القاعدة
             existing_lead = db.check_existing_lead(estimated_domain)
             if existing_lead:
                 print(f"[*] الشركة موجودة مسبقاً في القاعدة: {company_name} ({estimated_domain}) - يتم التخطي.")
@@ -80,8 +83,14 @@ if start_button:
 
             permutations = crawler.generate_permutations(owner, estimated_domain)
             
-            # تمرير حالة الـ found_in_dorks لنظام النقاط التراكمي في engine.py
-            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain, found_in_dorks)
+            # 2. فحص النقاط السيادي الصارم (مع تمرير الإيميلات المباشرة من الموقع)
+            best_email, smtp_status, score = verify_and_get_smart_email(owner, estimated_domain, found_in_dorks, onsite_emails)
+            
+            # سياسة الصيد النظيف: رفض أي شركة أقل من 75 نقطة لضمان عدم وجود أي إيميل وهمي
+            if score < 75:
+                print(f"[*] تم رفض الشركة '{company_name}' لضعف مؤشرات اليقين ({score}/100).")
+                continue
+
             lead_record = {
                 "company_name": company_name,
                 "domain": estimated_domain,
@@ -103,33 +112,33 @@ if start_button:
                 "رابط لينكد إن": linkedin_profile if linkedin_profile else "غير متوفر",
                 "مصدر الكشف": source,
                 "أفضل إيميل مؤكد": best_email,
-                "حالة فحص SMTP": smtp_status,
+                "حالة فحص اليقين": smtp_status,
                 "جميع الاحتمالات": permutations_str
             })
             
             processed_count += 1
             progress_bar.progress(min((i + 1) / len(raw_leads), 1.0))
+            
         if final_results:
             df = pd.DataFrame(final_results)
             col1, col2 = st.columns(2)
-            col1.metric("الشركات الجديدة المضافة", len(final_results))
-            col2.metric("الإيميلات المتاحة", len(df))
+            col1.metric("الشركات النقية المضافة", len(final_results))
+            col2.metric("الإيميلات المؤكدة 100%", len(df))
             st.dataframe(df, use_container_width=True)
-            # تصحيح طريقة حفظ وتصدير ملف الإكسل عبر BytesIO
+            
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Verilogix Leads')
+                df.to_excel(writer, index=False, sheet_name='Verilogix Verified Leads')
             buffer.seek(0)
 
             st.download_button(
-                label="📥 تحميل النتائج بصيغة xlsx",
+                label="📥 تحميل النتائج النقية حصرياً بصيغة xlsx",
                 data=buffer,
-                file_name=f"verilogix_leads_{city}.xlsx",
+                file_name=f"verilogix_verified_leads_{city}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-    
         else:
-            st.warning("⚠️ جميع الشركات المستخرجة موجودة مسبقاً في قاعدة البيانات! لم يتم إضافة شركات جديدة في هذه الدورة.")
+            st.warning("⚠️ لم يتم العثور على شركات تطابق معايير اليقين الصارمة (>=75) في هذه الدورة. جرب مدينة أخرى أو كلمة مفتاحية أوسع.")
     else:
         st.error("لم يتم العثور على نتائج من الخرائط.")
-            
+        
