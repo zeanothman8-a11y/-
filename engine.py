@@ -35,7 +35,6 @@ class SovereignEngine:
         except Exception:
             pass
         return False
-
     @classmethod
     def generate_smart_permutations(cls, owner_name: str, domain: str) -> list:
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
@@ -48,18 +47,22 @@ class SovereignEngine:
                 permutations.extend([
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
-                    f"{first[0]}{last}@{clean_domain}",
+                    f"{first[0]}{last}@{clean_domain}",       # jsmith (شائع في بريطانيا)
+                    f"{first}{last[0]}@{clean_domain}",       # johns
+                    f"{first[0]}.{last}@{clean_domain}",      # j.smith
                     f"{first}@{clean_domain}"
                 ])
         
+        # الأنماط التشغيلية الأساسية لقطاع اللوجستيات
         permutations.extend([
+            f"operations@{clean_domain}",
+            f"dispatch@{clean_domain}",
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
             f"sales@{clean_domain}",
             f"management@{clean_domain}"
         ])
         return list(dict.fromkeys(permutations))
-
     @classmethod
     def deep_verify_email(cls, owner_name: str, domain: str) -> tuple[str, str, int]:
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
