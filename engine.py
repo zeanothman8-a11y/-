@@ -140,4 +140,4 @@ class SovereignEngine:
 def verify_and_get_smart_email(owner_name: str, domain: str, found_in_dorks: bool = False, onsite_emails: list = None) -> tuple[str, str, int]:
     email, status, score = SovereignEngine.weighted_scoring_engine(owner_name, domain, found_in_dorks, onsite_emails)
     return email, f"{status}", score
-        
+            
