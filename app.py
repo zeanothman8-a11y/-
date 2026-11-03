@@ -34,36 +34,47 @@ st.title("🛰️ نظام Verilogix AI السيادي: صائد الشركات 
 st.sidebar.header("⚙️ إعدادات البحث")
 city = st.text_input("أدخل اسم المدينة والدولة:", "London, UK")
 keyword = st.text_input("الكلمة المفتاحية لنوع الشركة:", "Logistics companies")
-max_results = st.number_input("الحد الأقصى للنتائج:", min_value=5, max_value=50, value=10, step=5)
+max_results = st.number_input("الحد الأقصى للنتائج الجديدة:", min_value=5, max_value=50, value=10, step=5)
 
 start_button = st.button("🚀 بدء المحركات السيادية المتكاملة")
 if start_button:
     st.info(f"🔍 جاري تشغيل محرك السحب لمدينة: {city}...")
     
-    scraper = SovereignScraper(city=city, keyword=keyword, max_results=int(max_results))
+    scraper = SovereignScraper(city=city, keyword=keyword, max_results=int(max_results) * 2) # سحب عدد أكبر لضمان وجود شركات جديدة غير مخزنة
     raw_leads = asyncio.run(scraper.scrape_maps())
     
     if raw_leads:
-        st.success(f"تم بنجاح سحب {len(raw_leads)} شركة! جاري استخراج البيانات الدقيقة والتحقق من سيرفرات MX...")
+        st.success(f"تم سحب {len(raw_leads)} شركة مبدئياً من الخرائط. جاري الفلترة وتخطي المسجل مسبقاً...")
         
         crawler = SovereignCrawler(gemini_api_key=gemini_api_key)
         final_results = []
         progress_bar = st.progress(0)
         
+        processed_count = 0
         for i, comp in enumerate(raw_leads):
+            if processed_count >= int(max_results):
+                break
+
             company_name = comp["company_name"]
             maps_link = comp["maps_link"]
                     
-            # استدعاء البحث الذكي وصائد التنفيذيين
+            # استدعاء البحث الذكي وصائد التنفيذيين لجلب الدومين الحقيقي
             identity_data = asyncio.run(crawler.crawl_company_website(company_name, city))
             estimated_domain = identity_data["extracted_domain"]
-            owner = identity_data["owner_name"]
-            linkedin_profile = identity_data.get("linkedin_profile", "")
-            source = identity_data["source"]
-                    
+            
             if not estimated_domain:
                 clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("ltd", "").replace("limited", "")
                 estimated_domain = f"{clean_comp_name}.co.uk" if "uk" in city.lower() else f"{clean_comp_name}.com"
+
+            # 🛑 ميزة منع التكرار والتخطي إذا كانت الشركة موجودة مسبقاً في القاعدة
+            existing_lead = db.check_existing_lead(estimated_domain)
+            if existing_lead:
+                print(f"[*] الشركة موجودة مسبقاً في القاعدة: {company_name} ({estimated_domain}) - يتم التخطي.")
+                continue
+
+            owner = identity_data["owner_name"]
+            linkedin_profile = identity_data.get("linkedin_profile", "")
+            source = identity_data["source"]
 
             permutations = crawler.generate_permutations(owner, estimated_domain)
             best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
@@ -92,24 +103,28 @@ if start_button:
                 "حالة فحص SMTP": smtp_status,
                 "جميع الاحتمالات": permutations_str
             })
-                    
-            progress_bar.progress((i + 1) / len(raw_leads))
+            
+            processed_count += 1
+            progress_bar.progress(min((i + 1) / len(raw_leads), 1.0))
         
-        df = pd.DataFrame(final_results)
-        
-        col1, col2 = st.columns(2)
-        col1.metric("إجمالي الشركات المعالجة", len(final_results))
-        col2.metric("الإيميلات المتاحة", len(df))
-        
-        st.dataframe(df, use_container_width=True)
-        
-        csv_data = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 تحميل النتائج بصيغة xlsx",
-            data=csv_data,
-            file_name=f"verilogix_leads_{city}.xlsx",
-            mime="xlsx"
-        )
+        if final_results:
+            df = pd.DataFrame(final_results)
+            
+            col1, col2 = st.columns(2)
+            col1.metric("الشركات الجديدة المضافة", len(final_results))
+            col2.metric("الإيميلات المتاحة", len(df))
+            
+            st.dataframe(df, use_container_width=True)
+            
+            csv_data = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 تحميل النتائج بصيغة xlsx",
+                data=csv_data,
+                file_name=f"verilogix_leads_{city}.xlsx",
+                mime="xlsx"
+            )
+        else:
+            st.warning("⚠️ جميع الشركات المستخرجة موجودة مسبقاً في قاعدة البيانات! لم يتم إضافة شركات جديدة في هذه الدورة.")
     else:
-        st.error("لم يتم العثور على نتائج.")
-                
+        st.error("لم يتم العثور على نتائج من الخرائط.")
+            
