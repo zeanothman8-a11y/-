@@ -125,7 +125,6 @@ class SovereignCrawler:
             "linkedin_profile": social_data.get("linkedin_profile", ""),
             "source": source
         }
-
     @staticmethod
     def generate_permutations(owner_name: str, domain: str) -> list:
         clean_domain = SovereignCrawler.extract_clean_domain(domain)
@@ -139,14 +138,17 @@ class SovereignCrawler:
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
                     f"{first[0]}{last}@{clean_domain}",
+                    f"{first}{last[0]}@{clean_domain}",
+                    f"{first[0]}.{last}@{clean_domain}",
                     f"{first}@{clean_domain}"
                 ])
         
         permutations.extend([
+            f"operations@{clean_domain}",
+            f"dispatch@{clean_domain}",
             f"info@{clean_domain}",
             f"contact@{clean_domain}",
-            f"sales@{clean_domain}",
-            f"operations@{clean_domain}"
+            f"sales@{clean_domain}"
         ])
         return list(dict.fromkeys(permutations))
-        
+                
