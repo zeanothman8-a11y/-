@@ -1,4 +1,5 @@
 import os
+import io
 import openpyxl
 import subprocess
 import asyncio
@@ -108,23 +109,25 @@ if start_button:
             
             processed_count += 1
             progress_bar.progress(min((i + 1) / len(raw_leads), 1.0))
-        
         if final_results:
             df = pd.DataFrame(final_results)
-            
             col1, col2 = st.columns(2)
             col1.metric("الشركات الجديدة المضافة", len(final_results))
             col2.metric("الإيميلات المتاحة", len(df))
-            
             st.dataframe(df, use_container_width=True)
-            
-            csv_data = df.to_xlsx(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 تحميل النتائج بصيغة xlsx",
-                data=xlsx_data,
-                file_name=f"verilogix_leads_{city}.xlsx",
-                mime="xlsx"
-            )
+            # تصحيح طريقة حفظ وتصدير ملف الإكسل عبر BytesIO
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Verilogix Leads')
+    buffer.seek(0)
+
+    st.download_button(
+        label="📥 تحميل النتائج بصيغة xlsx",
+        data=buffer,
+        file_name=f"verilogix_leads_{city}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    
         else:
             st.warning("⚠️ جميع الشركات المستخرجة موجودة مسبقاً في قاعدة البيانات! لم يتم إضافة شركات جديدة في هذه الدورة.")
     else:
