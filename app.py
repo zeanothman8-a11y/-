@@ -1,4 +1,5 @@
 import os
+import openpyxl
 import subprocess
 import asyncio
 import streamlit as st
@@ -117,10 +118,10 @@ if start_button:
             
             st.dataframe(df, use_container_width=True)
             
-            csv_data = df.to_csv(index=False).encode('utf-8')
+            csv_data = df.to_xlsx(index=False).encode('utf-8')
             st.download_button(
                 label="📥 تحميل النتائج بصيغة xlsx",
-                data=csv_data,
+                data=xlsx_data,
                 file_name=f"verilogix_leads_{city}.xlsx",
                 mime="xlsx"
             )
