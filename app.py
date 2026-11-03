@@ -57,16 +57,16 @@ if start_button:
 
             company_name = comp["company_name"]
             maps_link = comp["maps_link"]
-                    
-            # استدعاء البحث الذكي وصائد التنفيذيين لجلب الدومين الحقيقي
+                        # استخراج بيانات الهوية والدومين والبحث الأرشيفي العميق
             identity_data = asyncio.run(crawler.crawl_company_website(company_name, city))
             estimated_domain = identity_data["extracted_domain"]
+            found_in_dorks = identity_data.get("found_in_dorks", False) # استلام حالة الـ Dorks
             
             if not estimated_domain:
                 clean_comp_name = company_name.lower().replace(" ", "").replace(",", "").replace(".", "").replace("ltd", "").replace("limited", "")
                 estimated_domain = f"{clean_comp_name}.co.uk" if "uk" in city.lower() else f"{clean_comp_name}.com"
 
-            # 🛑 ميزة منع التكرار والتخطي إذا كانت الشركة موجودة مسبقاً في القاعدة
+            # منع التكرار
             existing_lead = db.check_existing_lead(estimated_domain)
             if existing_lead:
                 print(f"[*] الشركة موجودة مسبقاً في القاعدة: {company_name} ({estimated_domain}) - يتم التخطي.")
@@ -77,8 +77,9 @@ if start_button:
             source = identity_data["source"]
 
             permutations = crawler.generate_permutations(owner, estimated_domain)
-            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain)
-                    
+            
+            # تمرير حالة الـ found_in_dorks لنظام النقاط التراكمي في engine.py
+            best_email, smtp_status = verify_and_get_smart_email(owner, estimated_domain, found_in_dorks)
             lead_record = {
                 "company_name": company_name,
                 "domain": estimated_domain,
