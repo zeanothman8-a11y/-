@@ -15,9 +15,6 @@ class SovereignCrawler:
 
     @staticmethod
     def sanitize_company_name(company_name: str) -> str:
-        """
-        تطهير اسم الشركة وإزالة الرموز لتوليد دومين نظيف
-        """
         clean = re.sub(r'[^\w\s]', '', company_name)
         stopwords = ['ltd', 'limited', 'llc', 'inc', 'co', 'company', 'group', 'logistics', 'transport', 'shipping']
         words = [w for w in clean.lower().split() if w not in stopwords]
@@ -34,9 +31,6 @@ class SovereignCrawler:
         return domain.lower().replace("www.", "").strip("/")
 
     def find_real_domain_via_ct(self, company_name: str) -> str:
-        """
-        البحث الذكي عبر سجلات الشهادات الرقمية (crt.sh API) للتعرف على الدومين الحقيقي
-        """
         compact_name, hyphen_name = self.sanitize_company_name(company_name)
         if not compact_name:
             return ""
@@ -58,13 +52,9 @@ class SovereignCrawler:
                                 return d
         except Exception:
             pass
-            
         return ""
 
     def find_decision_maker_social(self, company_name: str) -> dict:
-        """
-        بحث هندسي متقدم عبر DuckDuckGo للعثور على حساب لينكد إن الخاص بالمدير التنفيذي أو المؤسس
-        """
         query = f'site:linkedin.com/in/ ("CEO" OR "Founder" OR "Managing Director" OR "Owner" OR "Director") "{company_name}"'
         search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL(query).params}"
         
@@ -90,8 +80,6 @@ class SovereignCrawler:
                     
                     if "linkedin.com/in/" in raw_url:
                         result["linkedin_profile"] = raw_url
-                        
-                        # محاولة استخراج اسم الشخص تلقائياً من رابط لينكد إن (Slug)
                         slug = raw_url.split("linkedin.com/in/")[-1].split("/")[0]
                         clean_slug = slug.split('-')
                         name_parts = [w.capitalize() for w in clean_slug if not w.isdigit() and len(w) > 1 and w not in ['ceo', 'founder', 'owner', 'director', 'logistics', 'transport']]
@@ -106,6 +94,32 @@ class SovereignCrawler:
 
         return result
 
+    def check_archive_dorks(self, domain: str, company_name: str) -> bool:
+        """
+        استراتيجية الكشط الأرشيفي العميق (Cache & PDF Dorks)
+        البحث في ملفات PDF والعقود أو الصفحات المؤرشفة القديمة في الويب عن وجود بصمة للإيميل أو الدومين.
+        """
+        clean_domain = self.extract_clean_domain(domain)
+        if not clean_domain:
+            return False
+
+        queries = [
+            f'site:{clean_domain} filetype:pdf',
+            f'site:{clean_domain} "@{clean_domain}"',
+            f'"{company_name}" "@{clean_domain}"'
+        ]
+
+        for q in queries:
+            search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL(q).params}"
+            try:
+                response = httpx.get(search_url, headers=self.headers, timeout=6.0)
+                if response.status_code == 200:
+                    if f"@{clean_domain}" in response.text or "pdf" in response.text.lower():
+                        return True
+            except Exception:
+                continue
+        return False
+
     async def crawl_company_website(self, company_name: str, city: str) -> dict:
         # 1. جلب الدومين الحقيقي
         real_domain = self.find_real_domain_via_ct(company_name)
@@ -117,14 +131,27 @@ class SovereignCrawler:
         # 2. البحث عن صاحب القرار عبر لينكد إن
         social_data = self.find_decision_maker_social(company_name)
         owner_name = social_data["executive_name"]
-        source = "LinkedIn Dorks + CT Logs" if owner_name != "غير محدد" else "CT Logs Only"
+        
+        # 3. الفحص الأرشيفي العميق عبر Dorks
+        found_in_dorks = self.check_archive_dorks(real_domain, company_name)
+        
+        source_parts = []
+        if owner_name != "غير محدد":
+            source_parts.append("LinkedIn Dorks")
+        source_parts.append("CT Logs")
+        if found_in_dorks:
+            source_parts.append("Deep Archive Dorks")
+            
+        source = " + ".join(source_parts)
 
         return {
             "owner_name": owner_name,
             "extracted_domain": real_domain,
             "linkedin_profile": social_data.get("linkedin_profile", ""),
+            "found_in_dorks": found_in_dorks,
             "source": source
         }
+
     @staticmethod
     def generate_permutations(owner_name: str, domain: str) -> list:
         clean_domain = SovereignCrawler.extract_clean_domain(domain)
@@ -151,4 +178,4 @@ class SovereignCrawler:
             f"sales@{clean_domain}"
         ])
         return list(dict.fromkeys(permutations))
-                
+                        
