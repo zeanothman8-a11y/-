@@ -1,4 +1,3 @@
-import hashlib
 import httpx
 
 try:
@@ -50,24 +49,10 @@ class SovereignEngine:
                 pass
         return False
 
-    @staticmethod
-    def check_gravatar(email: str) -> bool:
-        clean_email = email.lower().strip()
-        email_hash = hashlib.md5(clean_email.encode('utf-8')).hexdigest()
-        url = f"https://www.gravatar.com/avatar/{email_hash}?d=404"
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VerilogixAI/3.0"}
-            response = httpx.get(url, headers=headers, timeout=3.0)
-            if response.status_code == 200:
-                return True
-        except Exception:
-            pass
-        return False
-
     @classmethod
     def weighted_scoring_engine(cls, owner_name: str, domain: str, found_in_dorks: bool = False, onsite_emails: list = None) -> tuple[str, str, int]:
         """
-        نظام تقييم الطبقات التراكمي السيادي الصارم (منع تام للبيانات الوهمية)
+        نظام تقييم الطبقات التراكمي السيادي الصارم (بدون Gravatar، تركيز على الأرشيف والويب والـ MX)
         """
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").strip("/")
         if not clean_domain:
@@ -101,36 +86,26 @@ class SovereignEngine:
         total_score = 0
         status_details = []
 
-        # 1. فحص الوجود عبر Dorks والأرشيف (+30 نقطة)
+        # 1. الوجود في الأرشيف العميق و Dorks (+35 نقطة)
         if found_in_dorks:
-            total_score += 30
-            status_details.append("وُجد في الأرشيف (+30)")
+            total_score += 35
+            status_details.append("الوجود في الأرشيف (+35)")
         else:
             status_details.append("بدون أرشيف (0)")
 
-        # 2. فحص Gravatar والهوية الرقمية (+30 نقطة)
-        gravatar_found = False
-        for email in permutations[:5]:
-            if cls.check_gravatar(email):
-                best_email = email
-                gravatar_found = True
-                total_score += 30
-                status_details.append(f"Gravatar مؤكد (+30)")
-                break
-
-        # 3. فحص الوجود الحي عبر HTTPS/HTTP (+20 نقطة)
+        # 2. موقع الويب حي ونشط (+35 نقطة)
         is_live_web = cls.check_domain_http_liveness(clean_domain)
         if is_live_web:
-            total_score += 20
-            status_details.append("موقع الشركة حي ونشط عبر الويب (+20)")
+            total_score += 35
+            status_details.append("موقع الويب حي ونشط (+35)")
         else:
             status_details.append("الموقع غير استجاب للويب (0)")
 
-        # 4. فحص سجلات الـ MX عبر DoH السحابي (+20 نقطة)
+        # 3. سيرفر البريد نشط عبر DoH (+30 نقطة)
         mx_host = cls._get_mx_host_doh(clean_domain)
         if mx_host:
-            total_score += 20
-            status_details.append(f"سيرفر بريد نشط DoH: {mx_host} (+20)")
+            total_score += 30
+            status_details.append(f"سيرفر البريد نشط DoH: {mx_host} (+30)")
         else:
             status_details.append("سيرفر البريد مخفي/محمي (0)")
 
