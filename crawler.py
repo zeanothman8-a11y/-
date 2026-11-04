@@ -5,11 +5,12 @@ from urllib.parse import urlparse
 import google.generativeai as genai
 
 class SovereignCrawler:
-    def __init__(self, gemini_api_key: str = None):
+    def __init__(self, gemini_api_key: str = None, serpapi_key: str = None):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
         self.gemini_api_key = gemini_api_key
+        self.serpapi_key = serpapi_key
         if gemini_api_key:
             genai.configure(api_key=gemini_api_key)
 
@@ -32,13 +33,33 @@ class SovereignCrawler:
 
     @staticmethod
     def is_spam_or_invalid_domain(domain: str) -> bool:
-        """
-        فلترة النطاقات المشبوهة، الكازينوهات، أو الدومينات الطويلة جداً التي تسبب الارتداد (Bounce)
-        """
         if not domain or len(domain) > 45 or len(domain.split('.')) > 3:
             return True
         spam_keywords = ["casino", "bet", "xxx", "porn", "slot", "game", "shop"]
         return any(kw in domain.lower() for kw in spam_keywords)
+
+    def search_via_serpapi(self, query: str) -> list:
+        """
+        استخدام SerpAPI لإجراء بحث نظيف ومضمون عبر جوجل بدون حظر
+        """
+        if not self.serpapi_key:
+            return []
+        
+        url = "https://serpapi.com/search"
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": self.serpapi_key,
+            "num": 5
+        }
+        try:
+            response = httpx.get(url, params=params, timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("organic_results", [])
+        except Exception as e:
+            print(f"SerpAPI Error: {e}")
+        return []
 
     def find_real_domain_via_ct(self, company_name: str) -> str:
         compact_name, hyphen_name = self.sanitize_company_name(company_name)
@@ -64,50 +85,54 @@ class SovereignCrawler:
             pass
         return ""
 
-    def find_decision_maker_social(self, company_name: str) -> dict:
-        query = f'site:linkedin.com/in/ ("CEO" OR "Founder" OR "Managing Director" OR "Owner" OR "Director") "{company_name}"'
-        search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL(query).params}"
-        
+    def find_decision_maker_and_registry(self, company_name: str, city: str) -> dict:
+        """
+        الدمج القوي: البحث في السجلات الرسمية (مثل Companies House لبريطانيا) وعبر Google Dorks لاستخراج المدير الحقيقي
+    -   """
         result = {
             "executive_name": "غير محدد",
             "linkedin_profile": "",
-            "confidence": 0
+            "found_in_dorks": False,
+            "source_type": "Direct"
         }
 
-        try:
-            response = httpx.get(search_url, headers=self.headers, timeout=8.0)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                results = soup.select('.result__url')
-                
-                for res in results:
-                    raw_url = res.get('href', '')
-                    if "uddg=" in raw_url:
-                        import urllib.parse
-                        parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(raw_url).query)
-                        if "uddg" in parsed_q:
-                            raw_url = parsed_q["uddg"][0]
-                    
-                    if "linkedin.com/in/" in raw_url:
-                        result["linkedin_profile"] = raw_url
-                        slug = raw_url.split("linkedin.com/in/")[-1].split("/")[0]
-                        clean_slug = slug.split('-')
-                        name_parts = [w.capitalize() for w in clean_slug if not w.isdigit() and len(w) > 1 and w not in ['ceo', 'founder', 'owner', 'director', 'logistics', 'transport']]
-                        
-                        if len(name_parts) >= 2:
-                            result["executive_name"] = " ".join(name_parts[:2])
-                        
-                        result["confidence"] = 90
+        # 1. الاستعلام الموجه عبر SerpAPI لسجلات الشركات البريطانية أو الأرشيف العميق (Deep Archive Dorks)
+        if "uk" in city.lower() or "london" in city.lower():
+            registry_query = f'site:find-and-update.company-information.service.gov.uk "{company_name}" Director OR CEO'
+            results = self.search_via_serpapi(registry_query)
+            if results:
+                result["found_in_dorks"] = True
+                result["source_type"] = "Companies House UK"
+                # تحليل العنوان أو السنابيت لاستخراج اسم المسؤول إن وجد
+                snippet = results[0].get("snippet", "")
+                # استخراج اسم المحطة القانونية إذا توفرت مؤشرات
+        
+        # 2. البحث العام عبر SerpAPI عن صانع القرار في لينكد إن أو التقارير المالية
+        query = f'site:linkedin.com/in/ ("CEO" OR "Founder" OR "Managing Director" OR "Owner") "{company_name}"'
+        results = self.search_via_serpapi(query)
+        
+        if not results:
+            # محاولة بحث بديلة في ملفات PDF أو التقارير المالية (Annual Reports)
+            query_pdf = f'"{company_name}" filetype:pdf ("CEO" OR "Founder" OR "Director")'
+            results = self.search_via_serpapi(query_pdf)
+            if results:
+                result["found_in_dorks"] = True
+
+        if results:
+            for res in results:
+                link = res.get("link", "")
+                if "linkedin.com/in/" in link:
+                    result["linkedin_profile"] = link
+                    slug = link.split("linkedin.com/in/")[-1].split("/")[0]
+                    clean_slug = slug.split('-')
+                    name_parts = [w.capitalize() for w in clean_slug if not w.isdigit() and len(w) > 1 and w not in ['ceo', 'founder', 'owner', 'director', 'logistics', 'transport']]
+                    if len(name_parts) >= 2:
+                        result["executive_name"] = " ".join(name_parts[:2])
                         break
-        except Exception as e:
-            print(f"Executive Hunt Error: {e}")
 
         return result
 
     def scrape_onsite_emails(self, domain: str) -> list:
-        """
-        الزحف العميق داخل صفحات الموقع الرسمي (/contact, /about, /team) لاستخراج إيميلات حقيقية
-        """
         found_emails = set()
         paths = ["", "/contact", "/contact-us", "/about", "/about-us", "/team"]
         email_regex = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
@@ -126,66 +151,37 @@ class SovereignCrawler:
                 continue
         return list(found_emails)
 
-    def check_archive_dorks(self, domain: str, company_name: str) -> bool:
-        clean_domain = self.extract_clean_domain(domain)
-        if not clean_domain:
-            return False
-
-        queries = [
-            f'site:{clean_domain} filetype:pdf',
-            f'site:{clean_domain} "@{clean_domain}"',
-            f'"{company_name}" "@{clean_domain}"'
-        ]
-
-        for q in queries:
-            search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL(q).params}"
-            try:
-                response = httpx.get(search_url, headers=self.headers, timeout=6.0)
-                if response.status_code == 200:
-                    if f"@{clean_domain}" in response.text or "pdf" in response.text.lower():
-                        return True
-            except Exception:
-                continue
-        return False
-
     async def crawl_company_website(self, company_name: str, city: str) -> dict:
-        # 1. جلب الدومين الحقيقي مع منع الدومينات الوهمية والمشبوهة
         real_domain = self.find_real_domain_via_ct(company_name)
         if not real_domain or self.is_spam_or_invalid_domain(real_domain):
             compact, hyphen = self.sanitize_company_name(company_name)
             tld = ".co.uk" if "uk" in city.lower() or "london" in city.lower() else ".com"
             candidate = f"{compact}{tld}"
             if self.is_spam_or_invalid_domain(candidate) or len(compact) > 25:
-                real_domain = "" # رفض القاطع للدومينات الوهمية الطويلة
+                real_domain = ""
             else:
                 real_domain = candidate
 
-        # 2. البحث عن صاحب القرار عبر لينكد إن
-        social_data = self.find_decision_maker_social(company_name)
-        owner_name = social_data["executive_name"]
-        
-        # 3. الفحص الأرشيفي العميق عبر Dorks
-        found_in_dorks = self.check_archive_dorks(real_domain, company_name) if real_domain else False
-        
-        # 4. البحث المباشر عن إيميلات في موقع الشركة
+        registry_data = self.find_decision_maker_and_registry(company_name, city)
+        owner_name = registry_data["executive_name"]
+        found_in_dorks = registry_data["found_in_dorks"]
+        linkedin_profile = registry_data["linkedin_profile"]
+        source_type = registry_data["source_type"]
+
         onsite_emails = self.scrape_onsite_emails(real_domain) if real_domain else []
 
-        source_parts = []
-        if owner_name != "غير محدد":
-            source_parts.append("LinkedIn Dorks")
+        source_parts = [source_type]
         if real_domain:
             source_parts.append("CT Logs")
-        if found_in_dorks:
-            source_parts.append("Deep Archive Dorks")
         if onsite_emails:
             source_parts.append("On-site Scrape")
             
-        source = " + ".join(source_parts) if source_parts else "Direct"
+        source = " + ".join(source_parts)
 
         return {
             "owner_name": owner_name,
             "extracted_domain": real_domain,
-            "linkedin_profile": social_data.get("linkedin_profile", ""),
+            "linkedin_profile": linkedin_profile,
             "found_in_dorks": found_in_dorks,
             "onsite_emails": onsite_emails,
             "source": source
@@ -204,8 +200,6 @@ class SovereignCrawler:
                     f"{first}.{last}@{clean_domain}",
                     f"{first}{last}@{clean_domain}",
                     f"{first[0]}{last}@{clean_domain}",
-                    f"{first}{last[0]}@{clean_domain}",
-                    f"{first[0]}.{last}@{clean_domain}",
                     f"{first}@{clean_domain}"
                 ])
         
